@@ -1,0 +1,148 @@
+[package]
+name = "zkmtd"
+version = "0.1.0"
+edition = "2021"
+authors = ["limbanjang"]
+description = "Post-Quantum Moving Target Defense ZK Library based on Plonky3 STARKs"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/farm32df1/ZKPMTD"
+keywords = ["cryptography", "zero-knowledge", "stark", "quantum-resistant", "mtd"]
+categories = ["cryptography", "no-std"]
+
+[lib]
+name = "zkmtd"
+path = "src/lib.rs"
+
+[dependencies]
+# Plonky3 - Modular STARK framework (required)
+p3-field = { version = "0.1", default-features = false }
+p3-goldilocks = { version = "0.1", default-features = false }
+p3-matrix = { version = "0.1", default-features = false }
+p3-air = { version = "0.1", default-features = false }
+
+# Plonky3 - Optional (std only due to tracing dependency)
+p3-commit = { version = "0.1", default-features = false, optional = true }
+p3-uni-stark = { version = "0.1", default-features = false, optional = true }
+p3-challenger = { version = "0.1", default-features = false, optional = true }
+p3-fri = { version = "0.1", default-features = false, optional = true }
+p3-merkle-tree = { version = "0.1", default-features = false, optional = true }
+p3-dft = { version = "0.1", default-features = false, optional = true }
+
+# Hash functions - ZK-Friendly
+p3-poseidon2 = { version = "0.1", default-features = false }
+p3-symmetric = { version = "0.1", default-features = false }
+
+# Serialization (optional)
+serde = { version = "1.0", default-features = false, features = ["derive"], optional = true }
+
+# Borsh serialization for Solana (optional)
+borsh = { version = "1.5", default-features = false, features = ["derive"], optional = true }
+
+# Randomness (std only)
+rand = { version = "0.8", optional = true }
+rand_chacha = { version = "0.3", optional = true }
+
+# no_std compatible types
+heapless = { version = "0.8", default-features = false }
+
+# Sensitive data security (memory zeroization)
+zeroize = { version = "1.7", default-features = false, features = ["alloc"] }
+
+# Cryptographically secure random generation (std only)
+getrandom = { version = "0.2", default-features = false, optional = true }
+
+[dev-dependencies]
+rand = "0.8"
+rand_chacha = "0.3"
+criterion = "0.5"
+proptest = "1.4"
+test-case = "3.3"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+
+[features]
+# Default features (full features for dev/test)
+default = ["alloc", "full-p3"]
+
+# Allocator support (required for most environments)
+alloc = []
+
+# Full Plonky3 features (std recommended due to tracing)
+full-p3 = ["p3-commit", "p3-uni-stark", "p3-challenger", "p3-fri", "p3-merkle-tree", "p3-dft", "rand", "rand_chacha"]
+
+# Standard library support
+std = ["alloc", "full-p3", "rand", "rand_chacha", "serde/std", "getrandom", "getrandom/std"]
+
+# Serialization support
+serde = ["dep:serde"]
+
+# Parallel processing (std)
+parallel = ["std"]
+
+# Solana adapter - off-chain (std, for testing/examples)
+solana-adapter = ["std"]
+
+# Solana program - on-chain (no_std, BPF target, minimal dependencies)
+solana-program = ["alloc", "borsh"]
+
+# Borsh serialization
+borsh = ["dep:borsh"]
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+
+[profile.bench]
+opt-level = 3
+lto = true
+
+# Debug profile
+[profile.dev]
+opt-level = 0
+debug = 2
+debug-assertions = true
+overflow-checks = true
+lto = false
+incremental = true
+codegen-units = 256
+
+# Test profile
+[profile.test]
+opt-level = 1
+debug = 2
+debug-assertions = true
+overflow-checks = true
+
+[[bench]]
+name = "stark_bench"
+harness = false
+
+[[bench]]
+name = "mtd_bench"
+harness = false
+
+[[bench]]
+name = "solana_cu_bench"
+harness = false
+
+[[example]]
+name = "basic_proof"
+required-features = ["std"]
+
+[[example]]
+name = "batch_proof"
+required-features = ["std"]
+
+[[example]]
+name = "cross_chain_benchmark"
+required-features = ["std"]
+
+[[example]]
+name = "mtd_demo"
+required-features = ["std"]
+
+[[example]]
+name = "solana_cu_estimate"
+required-features = ["std"]
