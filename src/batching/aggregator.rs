@@ -1,4 +1,5 @@
 //! Proof Aggregator - bundles multiple proofs into Merkle tree batch
+#![allow(deprecated)]
 
 use crate::batching::merkle::{hash_leaf, MerkleTree};
 use crate::core::errors::{Result, ZKMTDError};

@@ -46,6 +46,25 @@ Medical records can prove vaccination status or health conditions without reveal
 
 Identity verification confirms credential validity without transmitting personally identifiable information.
 
+## GDPR Compliance with Committed Public Inputs (Privacy-by-Default)
+
+All proofs commit public values with a Poseidon2 salt. There is no separate "standard mode" — privacy is the only mode.
+
+### Workflow
+
+1. **Off-chain**: Generate proof with `prove_fibonacci(num_rows, pv_salt)`
+2. **Off-chain**: Full STARK verification via `verify(&proof)`
+3. **On-chain**: Only `committed_values_hash()` is submitted — no plaintext public values
+4. **GDPR erasure**: Call `proof.erase_salt()` — salt is securely zeroed via `zeroize` crate, the on-chain hash becomes irreversible
+
+### Why This Works
+
+The `binding_hash` cryptographically binds the actual public values, the commitment hash, the value count, and the MTD parameters together. An attacker cannot substitute a different commitment because the binding hash would not match. The on-chain verifier only needs the committed hash, not the plaintext values.
+
+### After GDPR Deletion
+
+Once the salt is deleted, the committed hash on-chain is a one-way hash with no way to recover the original values. Under CNIL 2018 blockchain guidance, data that cannot be linked back to an individual is no longer personal data and falls outside GDPR scope.
+
 ## Data Flow Summary
 
 User device holds sensitive data. User device generates ZK proof. User device creates lightweight commitment. Lightweight commitment travels to blockchain. Blockchain verifies commitment only. Blockchain stores result only. Sensitive data never leaves user device.

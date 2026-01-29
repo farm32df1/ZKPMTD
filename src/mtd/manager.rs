@@ -8,7 +8,8 @@ use crate::utils::constants::{MTD_PARAM_CACHE_SIZE, TIMESTAMP_TOLERANCE_SECS};
 #[cfg(feature = "alloc")]
 use alloc::{collections::VecDeque, vec::Vec};
 
-#[derive(Debug)]
+use zeroize::Zeroize;
+
 pub struct MTDManager {
     seed: Vec<u8>,
     current_epoch: Epoch,
@@ -16,6 +17,22 @@ pub struct MTDManager {
     #[cfg(feature = "alloc")]
     cache: VecDeque<WarpingParams>,
     auto_advance: bool,
+}
+
+impl core::fmt::Debug for MTDManager {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("MTDManager")
+            .field("seed", &"<redacted>")
+            .field("current_epoch", &self.current_epoch)
+            .field("auto_advance", &self.auto_advance)
+            .finish()
+    }
+}
+
+impl Drop for MTDManager {
+    fn drop(&mut self) {
+        self.seed.zeroize();
+    }
 }
 
 impl MTDManager {

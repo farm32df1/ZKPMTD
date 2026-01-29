@@ -1,5 +1,5 @@
 //! Solana CU tests
-
+#![allow(deprecated)]
 #![cfg(feature = "solana-adapter")]
 
 use zkmtd::adapters::{SolanaAdapter, SolanaChainAdapter};

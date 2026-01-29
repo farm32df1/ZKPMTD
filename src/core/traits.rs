@@ -46,7 +46,7 @@ pub trait EntropySource {
     fn fill_bytes(&mut self, output: &mut [u8]) -> Result<()>;
     fn entropy_bits(&self) -> usize;
     fn is_cryptographically_secure(&self) -> bool {
-        true
+        false
     }
 }
 

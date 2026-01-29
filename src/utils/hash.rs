@@ -22,12 +22,9 @@ type Perm = Poseidon2<F, Poseidon2ExternalMatrixGeneral, DiffusionMatrixGoldiloc
 /// Global Poseidon2 instance with deterministic initialization
 /// Uses fixed seed for reproducibility across all executions
 fn get_poseidon2() -> Perm {
+    use crate::utils::constants::ZKMTD_POSEIDON2_SEED;
     use rand::SeedableRng;
     use rand_chacha::ChaCha20Rng;
-
-    // Deterministic seed - ensures identical hash results everywhere
-    // This seed is part of the protocol specification
-    const ZKMTD_POSEIDON2_SEED: u64 = 0x5A4B4D54445F5032; // "ZKMTD_P2" in hex-ish
 
     let mut rng = ChaCha20Rng::seed_from_u64(ZKMTD_POSEIDON2_SEED);
 
@@ -186,17 +183,40 @@ pub fn derive_mtd_params(seed: &[u8], epoch: u64, salt: &[u8]) -> Result<HashDig
     }
 }
 
-pub fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
+/// Derive a deterministic salt for public value commitment.
+/// salt = Poseidon2(seed || epoch || nonce, DOMAIN_PV_SALT)
+#[cfg(feature = "alloc")]
+pub fn derive_pv_salt(seed: &[u8], epoch: u64, nonce: &[u8]) -> HashDigest {
+    let mut data = Vec::with_capacity(seed.len() + 8 + nonce.len());
+    data.extend_from_slice(seed);
+    data.extend_from_slice(&epoch.to_le_bytes());
+    data.extend_from_slice(nonce);
+    poseidon_hash(&data, crate::utils::constants::DOMAIN_PV_SALT)
+}
 
+/// Constant-time equality comparison for fixed-size byte arrays.
+/// Avoids timing side-channels by always comparing all bytes.
+pub fn constant_time_eq_fixed<const N: usize>(a: &[u8; N], b: &[u8; N]) -> bool {
     let mut result = 0u8;
-    for (x, y) in a.iter().zip(b.iter()) {
+    for i in 0..N {
+        result |= a[i] ^ b[i];
+    }
+    result == 0
+}
+
+/// Constant-time equality comparison for variable-length slices.
+/// Both length comparison and content comparison are constant-time
+/// to prevent timing side-channel leaks.
+pub fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    let len_eq = a.len() == b.len();
+    let max_len = a.len().max(b.len());
+    let mut result = 0u8;
+    for i in 0..max_len {
+        let x = if i < a.len() { a[i] } else { 0 };
+        let y = if i < b.len() { b[i] } else { 0 };
         result |= x ^ y;
     }
-
-    result == 0
+    len_eq && result == 0
 }
 
 #[cfg(test)]
@@ -288,6 +308,30 @@ mod tests {
 
         assert!(constant_time_eq(&a, &b));
         assert!(!constant_time_eq(&a, &c));
+    }
+
+    #[cfg(feature = "alloc")]
+    #[test]
+    fn test_derive_pv_salt_deterministic() {
+        let salt1 = derive_pv_salt(b"seed", 100, b"nonce");
+        let salt2 = derive_pv_salt(b"seed", 100, b"nonce");
+        assert_eq!(salt1, salt2);
+    }
+
+    #[cfg(feature = "alloc")]
+    #[test]
+    fn test_derive_pv_salt_different_epoch() {
+        let salt1 = derive_pv_salt(b"seed", 100, b"nonce");
+        let salt2 = derive_pv_salt(b"seed", 101, b"nonce");
+        assert_ne!(salt1, salt2);
+    }
+
+    #[cfg(feature = "alloc")]
+    #[test]
+    fn test_derive_pv_salt_different_seed() {
+        let salt1 = derive_pv_salt(b"seed-A", 100, b"nonce");
+        let salt2 = derive_pv_salt(b"seed-B", 100, b"nonce");
+        assert_ne!(salt1, salt2);
     }
 
     #[test]
@@ -646,6 +690,7 @@ mod tests {
         x4 * x2 * x // x^7
     }
 
+    #[cfg(feature = "std")]
     #[test]
     fn test_compare_with_plonky3_poseidon2_structure() {
         // Verify our implementation follows Poseidon2 structure
@@ -656,9 +701,9 @@ mod tests {
         use rand::SeedableRng;
         use rand_chacha::ChaCha20Rng;
 
-        // Create real Plonky3 Poseidon2
+        // Create real Plonky3 Poseidon2 (verify it initializes without error)
         let mut rng = ChaCha20Rng::seed_from_u64(0);
-        let real_poseidon: Poseidon2<Goldilocks, Poseidon2ExternalMatrixGeneral, DiffusionMatrixGoldilocks, 16, 7> =
+        let _real_poseidon: Poseidon2<Goldilocks, Poseidon2ExternalMatrixGeneral, DiffusionMatrixGoldilocks, 16, 7> =
             Poseidon2::new_from_rng_128(
                 Poseidon2ExternalMatrixGeneral,
                 DiffusionMatrixGoldilocks,
@@ -666,9 +711,9 @@ mod tests {
             );
 
         // Both should:
-        // 1. Use Goldilocks field - ✓
-        // 2. Use x^7 S-box - ✓ (our impl uses x^7)
-        // 3. Have width 16 - ✓
+        // 1. Use Goldilocks field
+        // 2. Use x^7 S-box
+        // 3. Have width 16
 
         // Test that our permutation produces valid field elements
         let mut state = [F::zero(); 16];
@@ -686,10 +731,6 @@ mod tests {
                 i
             );
         }
-
-        // The real Poseidon2 exists and we've verified structural compatibility
-        // Note: Outputs will differ due to different round constants
-        println!("Plonky3 Poseidon2 structure verified: width=16, S-box=x^7, field=Goldilocks");
     }
 
     #[test]

@@ -175,18 +175,41 @@ impl SolanaChainAdapter for SolanaAdapter {
         })
     }
 
+    /// Estimate adapter-level CU cost for proof serialization + hashing on Solana.
+    ///
+    /// This covers full proof processing (serialization, hashing, per-byte cost).
+    /// For on-chain lightweight verification CU estimation, see
+    /// [`crate::solana::OnchainVerifier::estimate_cu`].
+    ///
+    /// Uses saturating arithmetic to prevent integer overflow on large inputs.
+    /// Returns u32::MAX if computation would overflow.
     fn estimate_compute_units(&self, proof_size: usize) -> u32 {
-        const BASE_CU: u32 = 5_000; // Transaction base cost
-        const PER_BYTE_CU: u32 = 10; // Byte processing cost
-        const HASH_CU: u32 = 100; // Poseidon2 hash cost
+        use crate::utils::constants::{SOLANA_BASE_CU, SOLANA_HASH_CU, SOLANA_PER_BYTE_CU};
+
+        // Compute in u64 to avoid overflow, then cap at u32::MAX
+        let proof_size_u64 = proof_size as u64;
 
         // Number of hash blocks (32-byte units)
-        let hash_blocks = proof_size.div_ceil(32) as u32;
+        let hash_blocks = proof_size_u64.saturating_add(31) / 32; // div_ceil equivalent
 
-        let total_cu = BASE_CU + (proof_size as u32 * PER_BYTE_CU) + (hash_blocks * HASH_CU);
+        // Compute total CU with overflow protection
+        let byte_cu = proof_size_u64.saturating_mul(SOLANA_PER_BYTE_CU as u64);
+        let hash_cu = hash_blocks.saturating_mul(SOLANA_HASH_CU as u64);
+        let base_cu = SOLANA_BASE_CU as u64;
 
-        // Add 10% safety margin
-        (total_cu as f32 * 1.1) as u32
+        let total_cu = base_cu
+            .saturating_add(byte_cu)
+            .saturating_add(hash_cu);
+
+        // Add 10% safety margin with overflow protection
+        let with_margin = total_cu.saturating_add(total_cu / 10);
+
+        // Cap at u32::MAX
+        if with_margin > u32::MAX as u64 {
+            u32::MAX
+        } else {
+            with_margin as u32
+        }
     }
 }
 

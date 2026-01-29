@@ -1,6 +1,7 @@
 //! Library Workflow Scenario Tests
 //!
 //! Validates the privacy-preserving verification workflow described in docs/WORKFLOW.md
+#![allow(deprecated)]
 
 use zkmtd::core::errors::Result;
 use zkmtd::mtd::Epoch;
@@ -435,5 +436,49 @@ fn test_workflow_cross_epoch_proof_invalidation() {
     assert!(
         result.is_err() || !result.unwrap(),
         "Should be invalid in different epoch"
+    );
+}
+
+// ============================================================
+// GDPR Compliance Workflow Tests
+// ============================================================
+
+#[cfg(feature = "full-p3")]
+#[test]
+fn test_workflow_gdpr_privacy_preserving_verification() {
+    use zkmtd::stark::integrated::IntegratedProver;
+    use zkmtd::utils::hash::derive_pv_salt;
+
+    // Scenario: Backend verifies sensitive data with ZKP, submits only committed hash on-chain,
+    //           then deletes user data + salt on GDPR erasure request.
+
+    let seed = b"gdpr-workflow-test";
+    let epoch = Epoch::new(100);
+
+    // Step 1: Off-chain — generate proof (privacy-by-default)
+    let prover = IntegratedProver::new(seed, epoch).unwrap();
+    let pv_salt = derive_pv_salt(seed, epoch.value(), b"user-123-session-456");
+    let mut proof = prover.prove_fibonacci(8, pv_salt).unwrap();
+
+    // Step 2: Off-chain — full verification (before on-chain submission)
+    let verifier = prover.get_verifier();
+    assert!(verifier.verify(&proof).unwrap(), "Off-chain verification failed");
+
+    // Step 3: Extract on-chain payload (only committed hash, no plaintext values)
+    let committed_hash = proof.committed_values_hash();
+    assert_ne!(committed_hash, &[0u8; 32], "Committed hash should not be zero");
+
+    // Step 4: On-chain verification would use committed_hash (simulated)
+    // In production, Solana program checks committed_hash against expected value
+
+    // Step 5: GDPR erasure — delete salt and original data
+    proof.erase_salt();
+    assert!(!proof.has_salt(), "Salt should be erased");
+
+    // Step 6: On-chain committed_hash is now irreversible
+    // The proof structure itself still verifies (binding hash intact)
+    assert!(
+        verifier.verify(&proof).unwrap(),
+        "Proof should remain verifiable after GDPR erasure"
     );
 }

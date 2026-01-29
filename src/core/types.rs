@@ -73,6 +73,12 @@ impl Zeroize for Witness {
 
 impl ZeroizeOnDrop for Witness {}
 
+impl Drop for Witness {
+    fn drop(&mut self) {
+        self.zeroize();
+    }
+}
+
 impl Witness {
     #[cfg(feature = "alloc")]
     pub fn new(data: Vec<u64>) -> Self {
@@ -145,6 +151,51 @@ impl ProofBatch {
 pub type FieldElement = u64;
 pub type HashDigest = [u8; 32];
 
+/// Committed public inputs for privacy-preserving verification.
+///
+/// Hashes public_values with a salt using Poseidon2, so only the commitment
+/// goes on-chain. Deleting the salt makes the commitment irreversible (GDPR erasure).
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub struct CommittedPublicInputs {
+    pub commitment: HashDigest,
+    pub value_count: u32,
+}
+
+impl CommittedPublicInputs {
+    /// Create a commitment from public values and a salt.
+    /// commitment = Poseidon2(public_values_bytes || salt, DOMAIN_PV_COMMIT)
+    #[cfg(feature = "alloc")]
+    pub fn commit(public_values: &[u64], pv_salt: &[u8; 32]) -> Self {
+        use crate::utils::constants::DOMAIN_PV_COMMIT;
+        use crate::utils::hash::poseidon_hash;
+
+        let mut data = Vec::with_capacity(public_values.len() * 8 + 32);
+        for &val in public_values {
+            data.extend_from_slice(&val.to_le_bytes());
+        }
+        data.extend_from_slice(pv_salt);
+
+        let commitment = poseidon_hash(&data, DOMAIN_PV_COMMIT);
+
+        Self {
+            commitment,
+            value_count: public_values.len() as u32,
+        }
+    }
+
+    /// Verify that the given public values and salt match this commitment.
+    #[cfg(feature = "alloc")]
+    pub fn verify(&self, public_values: &[u64], pv_salt: &[u8; 32]) -> bool {
+        if public_values.len() as u32 != self.value_count {
+            return false;
+        }
+
+        let recomputed = Self::commit(public_values, pv_salt);
+        crate::utils::hash::constant_time_eq_fixed(&self.commitment, &recomputed.commitment)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -189,6 +240,52 @@ mod tests {
         let inputs = PublicInputs::default();
         assert!(inputs.is_empty());
         assert_eq!(inputs.len(), 0);
+    }
+
+    #[cfg(feature = "alloc")]
+    #[test]
+    fn test_committed_public_inputs() {
+        let values = vec![1u64, 1, 2, 3, 5, 8, 13, 21];
+        let salt = [42u8; 32];
+
+        let committed = CommittedPublicInputs::commit(&values, &salt);
+        assert_eq!(committed.value_count, 8);
+        assert!(committed.verify(&values, &salt));
+    }
+
+    #[cfg(feature = "alloc")]
+    #[test]
+    fn test_committed_public_inputs_wrong_values() {
+        let values = vec![1u64, 1, 2, 3, 5, 8, 13, 21];
+        let salt = [42u8; 32];
+
+        let committed = CommittedPublicInputs::commit(&values, &salt);
+
+        let wrong_values = vec![1u64, 2, 3, 4, 5, 6, 7, 8];
+        assert!(!committed.verify(&wrong_values, &salt));
+    }
+
+    #[cfg(feature = "alloc")]
+    #[test]
+    fn test_committed_public_inputs_wrong_salt() {
+        let values = vec![1u64, 1, 2, 3, 5, 8, 13, 21];
+        let salt = [42u8; 32];
+
+        let committed = CommittedPublicInputs::commit(&values, &salt);
+
+        let wrong_salt = [99u8; 32];
+        assert!(!committed.verify(&values, &wrong_salt));
+    }
+
+    #[cfg(feature = "alloc")]
+    #[test]
+    fn test_committed_public_inputs_deterministic() {
+        let values = vec![0u64, 1, 1, 2, 3, 5];
+        let salt = [7u8; 32];
+
+        let c1 = CommittedPublicInputs::commit(&values, &salt);
+        let c2 = CommittedPublicInputs::commit(&values, &salt);
+        assert_eq!(c1, c2);
     }
 
     #[cfg(feature = "alloc")]

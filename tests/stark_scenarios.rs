@@ -327,3 +327,170 @@ fn test_performance_prove_verify_cycle() {
         assert!(is_valid, "Proof for size {} failed verification", size);
     }
 }
+
+// ============================================================
+// Sum AIR STARK Tests
+// ============================================================
+
+#[test]
+fn test_sum_stark_prove_and_verify() {
+    let air = SimpleAir::sum();
+    let prover = RealStarkProver::new(air).expect("Failed to create prover");
+
+    let a = vec![1, 2, 3, 4];
+    let b = vec![10, 20, 30, 40];
+
+    let proof = prover.prove_sum(&a, &b).expect("Failed to generate sum proof");
+    let verifier = prover.get_verifier();
+    let is_valid = verifier.verify_sum(&proof).expect("Verification failed");
+
+    assert!(is_valid, "Valid sum proof was rejected");
+}
+
+#[test]
+fn test_sum_stark_cross_air_soundness() {
+    // A Sum proof should not verify as a Multiplication proof
+    let sum_air = SimpleAir::sum();
+    let prover = RealStarkProver::new(sum_air).expect("Failed to create prover");
+
+    let a = vec![1, 2, 3, 4];
+    let b = vec![10, 20, 30, 40];
+
+    let sum_proof = prover.prove_sum(&a, &b).expect("Failed to generate sum proof");
+
+    // Verify Sum proof with Multiplication verifier — should fail
+    let verifier = prover.get_verifier();
+    let is_valid = verifier.verify_multiplication(&sum_proof).unwrap_or(false);
+
+    assert!(!is_valid, "Sum proof was accepted as Multiplication proof");
+}
+
+#[test]
+fn test_sum_stark_various_sizes() {
+    let air = SimpleAir::sum();
+    let prover = RealStarkProver::new(air).expect("Failed to create prover");
+
+    for size in [2, 4, 8, 16, 32] {
+        let a: Vec<u64> = (1..=size as u64).collect();
+        let b: Vec<u64> = (100..100 + size as u64).collect();
+
+        let proof = prover.prove_sum(&a, &b).expect("Failed to generate sum proof");
+        let verifier = prover.get_verifier();
+        let is_valid = verifier.verify_sum(&proof).expect("Verification failed");
+
+        assert!(is_valid, "Sum proof with {} elements was rejected", size);
+    }
+}
+
+// ============================================================
+// Multiplication AIR STARK Tests
+// ============================================================
+
+#[test]
+fn test_multiplication_stark_prove_and_verify() {
+    let air = SimpleAir::multiplication();
+    let prover = RealStarkProver::new(air).expect("Failed to create prover");
+
+    let a = vec![2, 3, 4, 5];
+    let b = vec![10, 20, 30, 40];
+
+    let proof = prover
+        .prove_multiplication(&a, &b)
+        .expect("Failed to generate mul proof");
+    let verifier = prover.get_verifier();
+    let is_valid = verifier
+        .verify_multiplication(&proof)
+        .expect("Verification failed");
+
+    assert!(is_valid, "Valid multiplication proof was rejected");
+}
+
+#[test]
+fn test_multiplication_stark_cross_air_soundness() {
+    // A Multiplication proof should not verify as a Sum proof
+    let mul_air = SimpleAir::multiplication();
+    let prover = RealStarkProver::new(mul_air).expect("Failed to create prover");
+
+    let a = vec![2, 3, 4, 5];
+    let b = vec![10, 20, 30, 40];
+
+    let mul_proof = prover
+        .prove_multiplication(&a, &b)
+        .expect("Failed to generate mul proof");
+
+    // Verify Multiplication proof with Sum verifier — should fail
+    let verifier = prover.get_verifier();
+    let is_valid = verifier.verify_sum(&mul_proof).unwrap_or(false);
+
+    assert!(!is_valid, "Multiplication proof was accepted as Sum proof");
+}
+
+// ============================================================
+// Range AIR STARK Tests
+// ============================================================
+
+#[test]
+fn test_range_stark_prove_and_verify() {
+    let air = SimpleAir::fibonacci(); // Prover needs any AIR to initialize
+    let prover = RealStarkProver::new(air).expect("Failed to create prover");
+
+    let value = 1000u64;
+    let threshold = 500u64;
+
+    let proof = prover
+        .prove_range(value, threshold)
+        .expect("Failed to generate range proof");
+    let verifier = prover.get_verifier();
+    let is_valid = verifier.verify_range(&proof).expect("Verification failed");
+
+    assert!(is_valid, "Valid range proof was rejected");
+}
+
+#[test]
+fn test_range_stark_value_below_threshold_rejected() {
+    let air = SimpleAir::fibonacci();
+    let prover = RealStarkProver::new(air).expect("Failed to create prover");
+
+    let value = 100u64;
+    let threshold = 500u64;
+
+    let result = prover.prove_range(value, threshold);
+    assert!(
+        result.is_err(),
+        "Range proof for value < threshold should be rejected at proof generation"
+    );
+}
+
+#[test]
+fn test_range_stark_boundary_values() {
+    let air = SimpleAir::fibonacci();
+    let prover = RealStarkProver::new(air).expect("Failed to create prover");
+    let verifier = prover.get_verifier();
+
+    // Exact boundary: value == threshold
+    let proof = prover
+        .prove_range(100, 100)
+        .expect("Failed to generate range proof for boundary");
+    let is_valid = verifier
+        .verify_range(&proof)
+        .expect("Verification failed");
+    assert!(is_valid, "Range proof at exact boundary was rejected");
+
+    // value = threshold + 1
+    let proof = prover
+        .prove_range(101, 100)
+        .expect("Failed to generate range proof");
+    let is_valid = verifier
+        .verify_range(&proof)
+        .expect("Verification failed");
+    assert!(is_valid, "Range proof for value > threshold was rejected");
+
+    // Zero threshold
+    let proof = prover
+        .prove_range(0, 0)
+        .expect("Failed to generate range proof for zero");
+    let is_valid = verifier
+        .verify_range(&proof)
+        .expect("Verification failed");
+    assert!(is_valid, "Range proof for value=0, threshold=0 was rejected");
+}

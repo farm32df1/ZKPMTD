@@ -7,13 +7,18 @@ use zkmtd::stark::air::SimpleAir;
 use zkmtd::stark::integrated::{IntegratedProver, IntegratedVerifier};
 use zkmtd::stark::real_stark::RealStarkProver;
 
+/// Helper: deterministic test salt for IntegratedProver
+fn test_salt() -> [u8; 32] {
+    [42u8; 32]
+}
+
 #[test]
 fn test_soundness_tampered_binding_hash() {
     let seed = b"soundness-binding-test";
     let epoch = Epoch::new(100);
 
     let prover = IntegratedProver::new(seed, epoch).expect("Failed to create prover");
-    let mut proof = prover.prove_fibonacci(8).expect("Failed to generate proof");
+    let mut proof = prover.prove_fibonacci(8, test_salt()).expect("Failed to generate proof");
 
     // Tamper with binding hash
     proof.binding_hash[0] ^= 0xFF;
@@ -35,7 +40,7 @@ fn test_soundness_tampered_public_values() {
     let epoch = Epoch::new(100);
 
     let prover = IntegratedProver::new(seed, epoch).expect("Failed to create prover");
-    let mut proof = prover.prove_fibonacci(8).expect("Failed to generate proof");
+    let mut proof = prover.prove_fibonacci(8, test_salt()).expect("Failed to generate proof");
 
     // Tamper with public values
     let original_value = proof.stark_proof.public_values[2];
@@ -60,7 +65,7 @@ fn test_soundness_wrong_epoch() {
     // Generate proof in epoch 100
     let prover_100 = IntegratedProver::new(seed, Epoch::new(100)).expect("Failed to create prover");
     let proof_100 = prover_100
-        .prove_fibonacci(8)
+        .prove_fibonacci(8, test_salt())
         .expect("Failed to generate proof");
 
     // Attempt verification with epoch 200 verifier
@@ -82,7 +87,7 @@ fn test_soundness_wrong_seed() {
     // Generate proof with seed-A
     let prover_a = IntegratedProver::new(b"seed-A", epoch).expect("Failed to create prover A");
     let proof_a = prover_a
-        .prove_fibonacci(8)
+        .prove_fibonacci(8, test_salt())
         .expect("Failed to generate proof A");
 
     // Attempt verification with seed-B verifier
@@ -106,7 +111,7 @@ fn test_soundness_tampered_num_rows() {
     let epoch = Epoch::new(100);
 
     let prover = IntegratedProver::new(seed, epoch).expect("Failed to create prover");
-    let mut proof = prover.prove_fibonacci(8).expect("Failed to generate proof");
+    let mut proof = prover.prove_fibonacci(8, test_salt()).expect("Failed to generate proof");
 
     // Tamper with num_rows (8 -> 16)
     proof.stark_proof.num_rows = 16;
@@ -206,7 +211,7 @@ fn test_fibonacci_cross_validation() {
 
     for (num_rows, expected_a, expected_b) in test_cases {
         let proof = prover
-            .prove_fibonacci(num_rows)
+            .prove_fibonacci(num_rows, test_salt())
             .expect("Failed to generate proof");
         let pv = proof.public_values();
 
@@ -241,7 +246,7 @@ fn test_independent_fibonacci_calculator() {
 
     for &num_rows in &[4, 8, 16, 32, 64] {
         let proof = prover
-            .prove_fibonacci(num_rows)
+            .prove_fibonacci(num_rows, test_salt())
             .expect("Failed to generate proof");
         let pv = proof.public_values();
 
@@ -269,7 +274,7 @@ fn test_epoch_transition_soundness() {
     let mut prover = IntegratedProver::new(seed, Epoch::new(100)).expect("Failed to create prover");
 
     // Generate proof in epoch 100
-    let proof_100 = prover.prove_fibonacci(8).expect("Failed to generate proof");
+    let proof_100 = prover.prove_fibonacci(8, test_salt()).expect("Failed to generate proof");
     let verifier_100 = prover.get_verifier();
 
     // Valid in epoch 100
@@ -293,7 +298,7 @@ fn test_epoch_transition_soundness() {
 
     // New proof in new epoch should be valid
     let proof_101 = prover
-        .prove_fibonacci(8)
+        .prove_fibonacci(8, test_salt())
         .expect("Failed to generate new proof");
     assert!(
         verifier_101.verify(&proof_101).unwrap(),
@@ -309,7 +314,7 @@ fn test_verification_consistency() {
     let epoch = Epoch::new(100);
 
     let prover = IntegratedProver::new(seed, epoch).expect("Failed to create prover");
-    let proof = prover.prove_fibonacci(8).expect("Failed to generate proof");
+    let proof = prover.prove_fibonacci(8, test_salt()).expect("Failed to generate proof");
     let verifier = prover.get_verifier();
 
     // Verify 100 times
@@ -331,7 +336,7 @@ fn test_independent_verifier_consistency() {
     let epoch = Epoch::new(100);
 
     let prover = IntegratedProver::new(seed, epoch).expect("Failed to create prover");
-    let proof = prover.prove_fibonacci(8).expect("Failed to generate proof");
+    let proof = prover.prove_fibonacci(8, test_salt()).expect("Failed to generate proof");
 
     // Create 5 independent verifiers
     for i in 0..5 {
@@ -348,6 +353,101 @@ fn test_independent_verifier_consistency() {
     }
 
     println!("All 5 independent verifiers returned consistent results");
+}
+
+// ============================================================
+// Committed Public Values Soundness Tests
+// ============================================================
+
+#[test]
+fn test_soundness_binding_hash_tampering_with_committed() {
+    let seed = b"soundness-committed-binding";
+    let epoch = Epoch::new(100);
+
+    let prover = IntegratedProver::new(seed, epoch).unwrap();
+    let mut proof = prover.prove_fibonacci(8, test_salt()).unwrap();
+
+    // Tamper with binding hash
+    proof.binding_hash[0] ^= 0xFF;
+
+    let verifier = prover.get_verifier();
+    let is_valid = verifier.verify(&proof).unwrap();
+    assert!(!is_valid, "Tampered binding hash was accepted");
+}
+
+#[test]
+fn test_soundness_wrong_epoch_with_committed() {
+    let seed = b"soundness-committed-epoch";
+
+    let prover = IntegratedProver::new(seed, Epoch::new(100)).unwrap();
+    let proof = prover.prove_fibonacci(8, test_salt()).unwrap();
+
+    let wrong_verifier = IntegratedVerifier::new(seed, Epoch::new(200)).unwrap();
+    let is_valid = wrong_verifier.verify(&proof).unwrap();
+    assert!(!is_valid, "Proof from wrong epoch was accepted");
+}
+
+// ============================================================
+// Sum/Mul/Range Soundness Tests
+// ============================================================
+
+#[test]
+fn test_soundness_sum_tampered_public_values() {
+    let seed = b"soundness-sum-pv";
+    let epoch = Epoch::new(100);
+
+    let prover = IntegratedProver::new(seed, epoch).unwrap();
+    let a = vec![1u64, 2, 3, 4];
+    let b = vec![10u64, 20, 30, 40];
+    let mut proof = prover.prove_sum(&a, &b, test_salt()).unwrap();
+
+    // Tamper with binding hash (invalidates the proof)
+    proof.binding_hash[0] ^= 0xFF;
+
+    let verifier = prover.get_verifier();
+    let is_valid = verifier.verify(&proof).unwrap();
+    assert!(
+        !is_valid,
+        "SOUNDNESS FAILURE: tampered sum proof binding was accepted"
+    );
+}
+
+#[test]
+fn test_soundness_mul_wrong_epoch() {
+    let seed = b"soundness-mul-epoch";
+
+    let prover = IntegratedProver::new(seed, Epoch::new(100)).unwrap();
+    let a = vec![2u64, 3, 4, 5];
+    let b = vec![10u64, 20, 30, 40];
+    let proof = prover
+        .prove_multiplication(&a, &b, test_salt())
+        .unwrap();
+
+    let wrong_verifier = IntegratedVerifier::new(seed, Epoch::new(200)).unwrap();
+    let is_valid = wrong_verifier.verify(&proof).unwrap();
+    assert!(
+        !is_valid,
+        "SOUNDNESS FAILURE: mul proof from wrong epoch was accepted"
+    );
+}
+
+#[test]
+fn test_soundness_range_tampered_binding() {
+    let seed = b"soundness-range-binding";
+    let epoch = Epoch::new(100);
+
+    let prover = IntegratedProver::new(seed, epoch).unwrap();
+    let mut proof = prover.prove_range(1000, 500, test_salt()).unwrap();
+
+    // Tamper with binding hash
+    proof.binding_hash[15] ^= 0xFF;
+
+    let verifier = prover.get_verifier();
+    let is_valid = verifier.verify(&proof).unwrap();
+    assert!(
+        !is_valid,
+        "SOUNDNESS FAILURE: tampered range proof binding was accepted"
+    );
 }
 
 const GOLDILOCKS_MODULUS: u64 = 18446744069414584321u64;

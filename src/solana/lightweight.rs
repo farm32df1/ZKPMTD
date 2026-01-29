@@ -24,6 +24,9 @@ pub struct LightweightProof {
     pub public_values: Vec<u64>,
     #[cfg(not(feature = "alloc"))]
     pub public_values: [u64; 4],
+    /// Committed public values hash (always present — privacy-by-default).
+    /// On-chain only sees this hash, not the actual values.
+    pub committed_values: [u8; 32],
 }
 
 impl LightweightProof {
@@ -34,6 +37,7 @@ impl LightweightProof {
         epoch: u64,
         timestamp: u64,
         public_values: Vec<u64>,
+        committed_values: [u8; 32],
     ) -> Self {
         Self {
             commitment,
@@ -41,17 +45,24 @@ impl LightweightProof {
             epoch,
             timestamp,
             public_values,
+            committed_values,
         }
     }
 
     #[cfg(feature = "alloc")]
-    pub fn from_commitment(commitment: [u8; 32], epoch: u64, public_values: Vec<u64>) -> Self {
+    pub fn from_commitment(
+        commitment: [u8; 32],
+        epoch: u64,
+        public_values: Vec<u64>,
+        committed_values: [u8; 32],
+    ) -> Self {
         Self {
             commitment,
             merkle_root: commitment, // Single proof: merkle root = commitment
             epoch,
             timestamp: 0, // Will be set by on-chain program
             public_values,
+            committed_values,
         }
     }
 
@@ -75,7 +86,7 @@ impl ProofCommitment {
         use crate::utils::hash::poseidon_hash;
 
         let hash = poseidon_hash(proof_data, DOMAIN_COMMITMENT);
-        let seed_hash = poseidon_hash(seed, b"SEED_FINGERPRINT");
+        let seed_hash = poseidon_hash(seed, crate::utils::constants::DOMAIN_SEED_FINGERPRINT);
         let seed_fingerprint = u64::from_le_bytes(seed_hash[0..8].try_into().unwrap_or([0u8; 8]));
 
         Self {
@@ -91,7 +102,7 @@ impl ProofCommitment {
         use crate::utils::hash::poseidon_hash;
 
         let computed_hash = poseidon_hash(proof_data, DOMAIN_COMMITMENT);
-        self.hash == computed_hash
+        crate::utils::hash::constant_time_eq_fixed(&self.hash, &computed_hash)
     }
 }
 
@@ -152,6 +163,7 @@ mod tests {
             100,
             1234567890,
             vec![1, 1, 2, 3, 5, 8, 13, 21],
+            [3u8; 32],
         );
 
         let serialized = borsh::to_vec(&proof).unwrap();

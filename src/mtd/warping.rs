@@ -55,7 +55,7 @@ impl WarpingParams {
             &domain_data,
             #[cfg(not(feature = "alloc"))]
             &domain_data[..38],
-            b"MTD_DOMAIN_SEP",
+            crate::utils::constants::DOMAIN_MTD_DOMAIN_SEP,
         );
 
         // 3. Generate Salt
@@ -76,7 +76,7 @@ impl WarpingParams {
             &domain_data,
             #[cfg(not(feature = "alloc"))]
             &domain_data[..36],
-            b"MTD_SALT",
+            crate::utils::constants::DOMAIN_MTD_SALT,
         );
 
         // 4. Generate FRI seed
@@ -97,7 +97,7 @@ impl WarpingParams {
             &domain_data,
             #[cfg(not(feature = "alloc"))]
             &domain_data[..35],
-            b"MTD_FRI_SEED",
+            crate::utils::constants::DOMAIN_MTD_FRI_SEED,
         );
 
         Ok(Self {

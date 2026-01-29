@@ -1,4 +1,5 @@
 //! STARK Verifier - simulation layer (use IntegratedVerifier for production)
+#![allow(deprecated)]
 
 use crate::core::errors::{Result, ZKMTDError};
 use crate::core::traits::Verifier;
@@ -72,7 +73,7 @@ impl MTDVerifierInner {
         }
         let hash_start = proof.data.len() - 32;
         let claimed_hash = &proof.data[hash_start..];
-        let computed_hash = poseidon_hash(&proof.data[..hash_start], b"PROOF_INTEGRITY");
+        let computed_hash = poseidon_hash(&proof.data[..hash_start], crate::utils::constants::DOMAIN_PROOF_INTEGRITY);
         Ok(crate::utils::hash::constant_time_eq(
             claimed_hash,
             &computed_hash,
@@ -170,6 +171,7 @@ impl MTDVerifierInner {
 }
 
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
     use super::*;
     use crate::core::traits::Prover;

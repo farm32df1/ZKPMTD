@@ -11,6 +11,7 @@ use alloc::vec::Vec;
 use p3_field::{extension::BinomialExtensionField, AbstractField, PrimeField64};
 use p3_goldilocks::{DiffusionMatrixGoldilocks, Goldilocks};
 use p3_matrix::dense::RowMajorMatrix;
+use p3_matrix::Matrix;
 
 // Plonky3 STARK Components
 use p3_challenger::DuplexChallenger;
@@ -23,6 +24,7 @@ use p3_uni_stark::{prove, verify, Proof, StarkConfig};
 
 // AIR
 use crate::stark::air::SimpleAir;
+use crate::stark::range_air::RangeAir;
 
 pub type Val = Goldilocks;
 pub type Challenge = BinomialExtensionField<Val, 2>;
@@ -40,6 +42,23 @@ type ChallengeMmcs = ExtensionMmcs<Val, Challenge, ValMmcs>;
 type Pcs = TwoAdicFriPcs<Val, p3_dft::Radix2DitParallel, ValMmcs, ChallengeMmcs>;
 type MyChallenger = DuplexChallenger<Val, Perm, 16, 8>;
 pub type MyStarkConfig = StarkConfig<Pcs, Challenge, MyChallenger>;
+
+/// Identifies which AIR circuit was used to generate a proof
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProofAirType {
+    Fibonacci = 0,
+    Sum = 1,
+    Multiplication = 2,
+    Range = 3,
+}
+
+impl ProofAirType {
+    /// Convert to a unique byte for binding hash inclusion.
+    /// This ensures proofs cannot be reused across different AIR types.
+    pub fn as_u8(self) -> u8 {
+        self as u8
+    }
+}
 
 pub struct RealStarkProver {
     air: SimpleAir,
@@ -93,6 +112,70 @@ impl RealStarkProver {
         Ok(RealProof {
             num_rows,
             public_values: public_values.iter().map(|v| v.as_canonical_u64()).collect(),
+            air_type: ProofAirType::Fibonacci,
+            inner: proof,
+            perm: self.perm.clone(),
+        })
+    }
+
+    /// Prove `a[i] + b[i] = c[i]` for all rows
+    pub fn prove_sum(&self, a_values: &[u64], b_values: &[u64]) -> Result<RealProof> {
+        let air = SimpleAir::sum();
+        let trace = build_sum_trace_p3(a_values, b_values)?;
+        let num_rows = trace.height();
+        let public_values = compute_sum_public_values(a_values, b_values);
+
+        let log_n = num_rows.trailing_zeros() as usize;
+        let config = create_stark_config(&self.perm, log_n);
+        let mut challenger = MyChallenger::new(self.perm.clone());
+        let proof = prove(&config, &air, &mut challenger, trace, &public_values);
+
+        Ok(RealProof {
+            num_rows,
+            public_values: public_values.iter().map(|v| v.as_canonical_u64()).collect(),
+            air_type: ProofAirType::Sum,
+            inner: proof,
+            perm: self.perm.clone(),
+        })
+    }
+
+    /// Prove `a[i] * b[i] = c[i]` for all rows
+    pub fn prove_multiplication(&self, a_values: &[u64], b_values: &[u64]) -> Result<RealProof> {
+        let air = SimpleAir::multiplication();
+        let trace = build_mul_trace_p3(a_values, b_values)?;
+        let num_rows = trace.height();
+        let public_values = compute_mul_public_values(a_values, b_values);
+
+        let log_n = num_rows.trailing_zeros() as usize;
+        let config = create_stark_config(&self.perm, log_n);
+        let mut challenger = MyChallenger::new(self.perm.clone());
+        let proof = prove(&config, &air, &mut challenger, trace, &public_values);
+
+        Ok(RealProof {
+            num_rows,
+            public_values: public_values.iter().map(|v| v.as_canonical_u64()).collect(),
+            air_type: ProofAirType::Multiplication,
+            inner: proof,
+            perm: self.perm.clone(),
+        })
+    }
+
+    /// Prove value >= threshold via bit decomposition
+    pub fn prove_range(&self, value: u64, threshold: u64) -> Result<RealProof> {
+        let air = RangeAir::new();
+        let trace = crate::stark::range_air::trace_builder::build_range_proof_trace(value, threshold)?;
+        let num_rows = trace.height();
+        let public_values = vec![Val::from_canonical_u64(threshold)];
+
+        let log_n = num_rows.trailing_zeros() as usize;
+        let config = create_stark_config(&self.perm, log_n);
+        let mut challenger = MyChallenger::new(self.perm.clone());
+        let proof = prove(&config, &air, &mut challenger, trace, &public_values);
+
+        Ok(RealProof {
+            num_rows,
+            public_values: public_values.iter().map(|v| v.as_canonical_u64()).collect(),
+            air_type: ProofAirType::Range,
             inner: proof,
             perm: self.perm.clone(),
         })
@@ -135,6 +218,16 @@ impl RealStarkVerifier {
         Ok(Self { air, perm })
     }
 
+    /// Dispatch verification based on proof's AIR type
+    pub fn verify_by_type(&self, proof: &RealProof) -> Result<bool> {
+        match proof.air_type {
+            ProofAirType::Fibonacci => self.verify_fibonacci(proof),
+            ProofAirType::Sum => self.verify_sum(proof),
+            ProofAirType::Multiplication => self.verify_multiplication(proof),
+            ProofAirType::Range => self.verify_range(proof),
+        }
+    }
+
     pub fn verify_fibonacci(&self, proof: &RealProof) -> Result<bool> {
         // 0. Public values integrity verification (soundness guarantee)
         // Public values must match trace computation.
@@ -170,11 +263,81 @@ impl RealStarkVerifier {
             Err(_) => Ok(false),
         }
     }
+
+    pub fn verify_sum(&self, proof: &RealProof) -> Result<bool> {
+        // SOUNDNESS: Verify num_rows is power of 2 (STARK requirement)
+        if !proof.num_rows.is_power_of_two() || proof.num_rows < 2 {
+            return Ok(false);
+        }
+
+        let air = SimpleAir::sum();
+        let public_values: Vec<Val> = proof
+            .public_values
+            .iter()
+            .map(|&v| Val::from_canonical_u64(v))
+            .collect();
+
+        let log_n = proof.num_rows.trailing_zeros() as usize;
+        let config = create_stark_config(&proof.perm, log_n);
+        let mut challenger = MyChallenger::new(proof.perm.clone());
+
+        match verify(&config, &air, &mut challenger, &proof.inner, &public_values) {
+            Ok(()) => Ok(true),
+            Err(_) => Ok(false),
+        }
+    }
+
+    pub fn verify_multiplication(&self, proof: &RealProof) -> Result<bool> {
+        // SOUNDNESS: Verify num_rows is power of 2 (STARK requirement)
+        if !proof.num_rows.is_power_of_two() || proof.num_rows < 2 {
+            return Ok(false);
+        }
+
+        let air = SimpleAir::multiplication();
+        let public_values: Vec<Val> = proof
+            .public_values
+            .iter()
+            .map(|&v| Val::from_canonical_u64(v))
+            .collect();
+
+        let log_n = proof.num_rows.trailing_zeros() as usize;
+        let config = create_stark_config(&proof.perm, log_n);
+        let mut challenger = MyChallenger::new(proof.perm.clone());
+
+        match verify(&config, &air, &mut challenger, &proof.inner, &public_values) {
+            Ok(()) => Ok(true),
+            Err(_) => Ok(false),
+        }
+    }
+
+    pub fn verify_range(&self, proof: &RealProof) -> Result<bool> {
+        // SOUNDNESS: Verify num_rows is power of 2 (STARK requirement)
+        if !proof.num_rows.is_power_of_two() || proof.num_rows < 2 {
+            return Ok(false);
+        }
+
+        let air = RangeAir::new();
+        let public_values: Vec<Val> = proof
+            .public_values
+            .iter()
+            .map(|&v| Val::from_canonical_u64(v))
+            .collect();
+
+        let log_n = proof.num_rows.trailing_zeros() as usize;
+        let config = create_stark_config(&proof.perm, log_n);
+        let mut challenger = MyChallenger::new(proof.perm.clone());
+
+        match verify(&config, &air, &mut challenger, &proof.inner, &public_values) {
+            Ok(()) => Ok(true),
+            Err(_) => Ok(false),
+        }
+    }
 }
 
 pub struct RealProof {
     pub num_rows: usize,
     pub public_values: Vec<u64>,
+    pub air_type: ProofAirType,
     inner: Proof<MyStarkConfig>,
     perm: Perm,
 }
@@ -184,17 +347,19 @@ impl core::fmt::Debug for RealProof {
         f.debug_struct("RealProof")
             .field("num_rows", &self.num_rows)
             .field("public_values", &self.public_values)
+            .field("air_type", &self.air_type)
             .field("inner", &"<Proof>")
             .finish()
     }
 }
 
 fn create_poseidon2_perm() -> Perm {
+    use crate::utils::constants::ZKMTD_POSEIDON2_SEED;
     use rand::SeedableRng;
     use rand_chacha::ChaCha20Rng;
 
-    // Use deterministic seed (ensures identical verification results)
-    let mut rng = ChaCha20Rng::seed_from_u64(0x5A4B5D4C3B2A1908);
+    // Use deterministic seed from constants (ensures identical hash and proof results)
+    let mut rng = ChaCha20Rng::seed_from_u64(ZKMTD_POSEIDON2_SEED);
 
     Perm::new_from_rng_128(
         Poseidon2ExternalMatrixGeneral,
@@ -213,9 +378,14 @@ fn create_stark_config(perm: &Perm, log_n: usize) -> MyStarkConfig {
     let challenge_mmcs = ChallengeMmcs::new(val_mmcs.clone());
 
     // FRI configuration (includes mmcs)
+    // Security: 128-bit soundness
+    // - log_blowup=2 → blowup=4 → 2 bits per query
+    // - num_queries=60 → 120 bits from queries
+    // - proof_of_work_bits=8 → 8 bits from PoW
+    // - Total: 120 + 8 = 128 bits
     let fri_config = FriConfig {
         log_blowup: 2,
-        num_queries: 28,
+        num_queries: 60,
         proof_of_work_bits: 8,
         mmcs: challenge_mmcs,
     };
@@ -307,6 +477,112 @@ fn verify_public_values_consistency(num_rows: usize, public_values: &[u64]) -> b
     }
 
     true
+}
+
+/// Build p3 trace for Sum AIR: columns [a, b, c=a+b]
+fn build_sum_trace_p3(a_values: &[u64], b_values: &[u64]) -> Result<RowMajorMatrix<Val>> {
+    if a_values.len() != b_values.len() {
+        return Err(ZKMTDError::InvalidWitness {
+            reason: alloc::format!(
+                "Array lengths do not match: a={}, b={}",
+                a_values.len(),
+                b_values.len()
+            ),
+        });
+    }
+    if a_values.is_empty() {
+        return Err(ZKMTDError::InvalidWitness {
+            reason: "Empty input arrays".into(),
+        });
+    }
+
+    let len = a_values.len();
+    let num_rows = len.next_power_of_two().max(2);
+    let mut values = Vec::with_capacity(num_rows * 3);
+
+    for i in 0..num_rows {
+        let a = if i < len { Val::from_canonical_u64(a_values[i]) } else { Val::zero() };
+        let b = if i < len { Val::from_canonical_u64(b_values[i]) } else { Val::zero() };
+        let c = a + b;
+        values.push(a);
+        values.push(b);
+        values.push(c);
+    }
+
+    Ok(RowMajorMatrix::new(values, 3))
+}
+
+/// Compute public values for Sum AIR: first and last row values.
+/// Format: [a_first, b_first, c_first, a_last, b_last, c_last]
+/// This allows the verifier to confirm the computation on known inputs/outputs.
+fn compute_sum_public_values(a_values: &[u64], b_values: &[u64]) -> Vec<Val> {
+    if a_values.is_empty() || b_values.is_empty() {
+        return vec![];
+    }
+
+    let len = a_values.len();
+    let a_first = Val::from_canonical_u64(a_values[0]);
+    let b_first = Val::from_canonical_u64(b_values[0]);
+    let c_first = a_first + b_first;
+
+    let a_last = Val::from_canonical_u64(a_values[len - 1]);
+    let b_last = Val::from_canonical_u64(b_values[len - 1]);
+    let c_last = a_last + b_last;
+
+    vec![a_first, b_first, c_first, a_last, b_last, c_last]
+}
+
+/// Build p3 trace for Multiplication AIR: columns [a, b, c=a*b]
+fn build_mul_trace_p3(a_values: &[u64], b_values: &[u64]) -> Result<RowMajorMatrix<Val>> {
+    if a_values.len() != b_values.len() {
+        return Err(ZKMTDError::InvalidWitness {
+            reason: alloc::format!(
+                "Array lengths do not match: a={}, b={}",
+                a_values.len(),
+                b_values.len()
+            ),
+        });
+    }
+    if a_values.is_empty() {
+        return Err(ZKMTDError::InvalidWitness {
+            reason: "Empty input arrays".into(),
+        });
+    }
+
+    let len = a_values.len();
+    let num_rows = len.next_power_of_two().max(2);
+    let mut values = Vec::with_capacity(num_rows * 3);
+
+    for i in 0..num_rows {
+        let a = if i < len { Val::from_canonical_u64(a_values[i]) } else { Val::zero() };
+        let b = if i < len { Val::from_canonical_u64(b_values[i]) } else { Val::zero() };
+        let c = a * b;
+        values.push(a);
+        values.push(b);
+        values.push(c);
+    }
+
+    Ok(RowMajorMatrix::new(values, 3))
+}
+
+/// Compute public values for Multiplication AIR: first and last row values.
+/// Format: [a_first, b_first, c_first, a_last, b_last, c_last]
+/// This allows the verifier to confirm the computation on known inputs/outputs.
+fn compute_mul_public_values(a_values: &[u64], b_values: &[u64]) -> Vec<Val> {
+    if a_values.is_empty() || b_values.is_empty() {
+        return vec![];
+    }
+
+    let len = a_values.len();
+    let a_first = Val::from_canonical_u64(a_values[0]);
+    let b_first = Val::from_canonical_u64(b_values[0]);
+    let c_first = a_first * b_first;
+
+    let a_last = Val::from_canonical_u64(a_values[len - 1]);
+    let b_last = Val::from_canonical_u64(b_values[len - 1]);
+    let c_last = a_last * b_last;
+
+    vec![a_first, b_first, c_first, a_last, b_last, c_last]
 }
 
 #[cfg(test)]

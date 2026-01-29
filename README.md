@@ -7,11 +7,13 @@ A zero-knowledge proof library combining Plonky3 STARK proofs with Moving Target
 
 ## 1. Features
 
-**Post-Quantum Security**: Hash-based STARK proofs immune to Shor's algorithm. No elliptic curve cryptography.
+**128-bit Soundness**: Hash-based STARK proofs with 128-bit security level (60 FRI queries + 8-bit PoW). Immune to Shor's algorithm. No elliptic curve cryptography.
 
 **No Trusted Setup**: All parameters are publicly verifiable. No ceremony required.
 
 **Moving Target Defense**: Cryptographic parameters rotate every epoch. Previous epoch proofs automatically invalidated.
+
+**Privacy-by-Default**: All proofs commit public values with Poseidon2 + salt. No plaintext values on-chain. GDPR-compliant erasure via salt deletion.
 
 **Solana Ready**: Lightweight verification within on-chain compute limits.
 
@@ -46,7 +48,11 @@ zkmtd = { git = "https://github.com/farm32df1/ZKPMTD.git", features = ["std", "f
 
 **Fibonacci AIR**: Proves computational integrity of Fibonacci sequence.
 
-**Range AIR**: Proves value meets threshold without revealing actual value (privacy-preserving).
+**Sum AIR**: Proves `c = a + b` for each row. Validates addition computations.
+
+**Multiplication AIR**: Proves `c = a * b` for each row. Validates multiplication computations.
+
+**Range AIR**: Proves value meets threshold without revealing actual value (privacy-preserving). Uses 32-bit decomposition.
 
 ## 6. Solana Integration
 
@@ -61,11 +67,13 @@ zkmtd = { git = "https://github.com/farm32df1/ZKPMTD.git", features = ["std", "f
 
 ```
 src/
-├── core/       Type definitions (Proof, Witness, PublicInputs)
-├── stark/      STARK proof system
-├── mtd/        Moving Target Defense
-├── batching/   Batch proof system
-└── adapters/   Blockchain adapters
+├── core/       Type definitions (Proof, Witness, PublicInputs, Errors)
+├── stark/      STARK proof system (AIR, Prover, Verifier, Integrated)
+├── mtd/        Moving Target Defense (Epoch, WarpingParams, Entropy)
+├── batching/   Batch proof system (Merkle tree)
+├── adapters/   Blockchain adapters
+├── utils/      Hash, compression, constants
+└── solana/     On-chain lightweight verification (feature-gated)
 ```
 
 ## 8. Examples
@@ -75,6 +83,7 @@ cargo run --example basic_proof --features "std,full-p3"
 cargo run --example mtd_demo --features "std,full-p3"
 cargo run --example batch_proof --features "std,full-p3"
 cargo run --example solana_cu_estimate --features "std,full-p3"
+cargo run --example committed_inputs --features "std,full-p3"
 ```
 
 ## 9. Testing
@@ -83,12 +92,25 @@ cargo run --example solana_cu_estimate --features "std,full-p3"
 cargo test --features "std,full-p3"
 ```
 
-214 tests passing (unit, integration, soundness, compression, STARK scenarios, doc-tests, Solana)
+283 tests passing (unit, integration, soundness, compression, STARK scenarios, committed inputs, property tests, library workflows)
+
+**Fuzzing**: 5 targets with 24M+ combined runs, 0 crashes
+```bash
+cd fuzz && cargo +nightly fuzz run fuzz_proof_deserialize
+```
+
+**Coverage**: 85.57% line coverage
+```bash
+cargo llvm-cov --features "std,full-p3"
+```
 
 ## 10. Documentation
 
 - [docs/GUIDE.md](docs/GUIDE.md): Usage guide
 - [docs/TECHNICAL.md](docs/TECHNICAL.md): Technical reference
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): Internal architecture
+- [docs/SECURITY_PROOF.md](docs/SECURITY_PROOF.md): Formal security analysis
+- [docs/AUDIT_REPORT.md](docs/AUDIT_REPORT.md): Code audit report
 - API docs: `cargo doc --open --features "std,full-p3"`
 
 ## 11. License

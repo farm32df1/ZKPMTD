@@ -17,13 +17,14 @@ pub mod stark;
 pub mod utils;
 
 /// Solana on-chain module (lightweight verification)
-#[cfg(feature = "solana-program")]
+/// Available with std feature for testing/fuzzing, or solana-program for on-chain
+#[cfg(any(feature = "solana-program", feature = "std"))]
 pub mod solana;
 
 pub use crate::core::{
     errors::{Result, ZKMTDError},
     traits::{EntropySource, Prover, Verifier},
-    types::{Proof, PublicInputs, Witness},
+    types::{CommittedPublicInputs, Proof, PublicInputs, Witness},
 };
 
 pub use crate::mtd::{Epoch, MTDManager};
@@ -31,11 +32,12 @@ pub use crate::mtd::{Epoch, MTDManager};
 #[cfg(feature = "std")]
 pub use crate::mtd::entropy::SystemEntropy;
 
+#[allow(deprecated)]
 pub use crate::stark::{MTDProver, MTDVerifier, StarkConfig};
 
 pub use crate::batching::{BatchProver, BatchVerifier, ProofBatch};
 
-#[cfg(feature = "solana-program")]
+#[cfg(any(feature = "solana-program", feature = "std"))]
 pub use crate::solana::{LightweightProof, OnchainVerifier, ProofCommitment};
 
 /// Library version
@@ -48,8 +50,9 @@ pub const NAME: &str = "ZKMTD";
 pub mod prelude {
     pub use crate::core::errors::{Result, ZKMTDError};
     pub use crate::core::traits::{EntropySource, Prover, Verifier};
-    pub use crate::core::types::{Proof, PublicInputs, Witness};
+    pub use crate::core::types::{CommittedPublicInputs, Proof, PublicInputs, Witness};
     pub use crate::mtd::{Epoch, MTDManager};
+    #[allow(deprecated)]
     pub use crate::stark::{MTDProver, MTDVerifier};
 
     #[cfg(feature = "alloc")]

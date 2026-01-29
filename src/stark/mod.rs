@@ -29,10 +29,11 @@ pub mod range_air;
 
 pub use air::SimpleAir;
 pub use config::StarkConfig;
+#[allow(deprecated)]
 pub use prover::{MTDProver, MTDVerifier};
 
 #[cfg(feature = "full-p3")]
-pub use real_stark::{RealProof, RealStarkProver, RealStarkVerifier};
+pub use real_stark::{ProofAirType, RealProof, RealStarkProver, RealStarkVerifier};
 
 #[cfg(feature = "full-p3")]
 pub use integrated::{IntegratedProof, IntegratedProver, IntegratedVerifier};

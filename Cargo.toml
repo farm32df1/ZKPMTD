@@ -38,9 +38,9 @@ serde = { version = "1.0", default-features = false, features = ["derive"], opti
 # Borsh serialization for Solana (optional)
 borsh = { version = "1.5", default-features = false, features = ["derive"], optional = true }
 
-# Randomness (std only)
-rand = { version = "0.8", optional = true }
-rand_chacha = { version = "0.3", optional = true }
+# Randomness (used for deterministic Poseidon2 initialization)
+rand = { version = "0.8", default-features = false }
+rand_chacha = { version = "0.3", default-features = false }
 
 # no_std compatible types
 heapless = { version = "0.8", default-features = false }
@@ -68,10 +68,10 @@ default = ["alloc", "full-p3"]
 alloc = []
 
 # Full Plonky3 features (std recommended due to tracing)
-full-p3 = ["p3-commit", "p3-uni-stark", "p3-challenger", "p3-fri", "p3-merkle-tree", "p3-dft", "rand", "rand_chacha"]
+full-p3 = ["p3-commit", "p3-uni-stark", "p3-challenger", "p3-fri", "p3-merkle-tree", "p3-dft"]
 
 # Standard library support
-std = ["alloc", "full-p3", "rand", "rand_chacha", "serde/std", "getrandom", "getrandom/std"]
+std = ["alloc", "full-p3", "serde/std", "getrandom", "getrandom/std"]
 
 # Serialization support
 serde = ["dep:serde"]
@@ -145,4 +145,8 @@ required-features = ["std"]
 
 [[example]]
 name = "solana_cu_estimate"
+required-features = ["std"]
+
+[[example]]
+name = "committed_inputs"
 required-features = ["std"]

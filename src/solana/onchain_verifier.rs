@@ -19,6 +19,7 @@ pub enum VerificationStatus {
     InvalidCommitment,
     InvalidMerkleProof,
     InvalidPublicValues,
+    InvalidCommittedValues,
     MalformedProof,
 }
 
@@ -34,15 +35,17 @@ pub struct OnchainVerifier {
     epoch_tolerance: u64,
     #[cfg(feature = "alloc")]
     expected_public_values: Option<Vec<u64>>,
+    expected_committed_values: [u8; 32],
 }
 
 impl OnchainVerifier {
-    pub fn new(current_epoch: u64) -> Self {
+    pub fn new(current_epoch: u64, expected_committed_values: [u8; 32]) -> Self {
         Self {
             current_epoch,
             epoch_tolerance: 1, // Allow 1 epoch tolerance by default
             #[cfg(feature = "alloc")]
             expected_public_values: None,
+            expected_committed_values,
         }
     }
 
@@ -54,6 +57,11 @@ impl OnchainVerifier {
     #[cfg(feature = "alloc")]
     pub fn with_expected_values(mut self, values: Vec<u64>) -> Self {
         self.expected_public_values = Some(values);
+        self
+    }
+
+    pub fn with_expected_committed_values(mut self, committed: [u8; 32]) -> Self {
+        self.expected_committed_values = committed;
         self
     }
 
@@ -80,6 +88,11 @@ impl OnchainVerifier {
             if !self.verify_public_values(&proof.public_values, expected) {
                 return VerificationStatus::InvalidPublicValues;
             }
+        }
+
+        // 4. Verify committed values match expected
+        if proof.committed_values != self.expected_committed_values {
+            return VerificationStatus::InvalidCommittedValues;
         }
 
         VerificationStatus::Valid
@@ -124,11 +137,15 @@ impl OnchainVerifier {
         commitment.verify(proof_data)
     }
 
+    /// Estimate on-chain CU cost for lightweight verification.
+    ///
+    /// This covers commitment + epoch checks only (~5K CU total).
+    /// For full adapter-level CU estimation, see `SolanaAdapter::estimate_compute_units()`
+    /// in the `adapters` module.
     pub fn estimate_cu(proof_size_bytes: usize) -> u64 {
-        let base_cu = 500u64;
-        let hash_cu = ((proof_size_bytes / 64) as u64 + 1) * 100;
-        let buffer = 200u64;
-        base_cu + hash_cu + buffer
+        use crate::utils::constants::{ONCHAIN_BASE_CU, ONCHAIN_BUFFER_CU, ONCHAIN_HASH_CU};
+        let hash_cu = ((proof_size_bytes / 64) as u64 + 1) * ONCHAIN_HASH_CU;
+        ONCHAIN_BASE_CU + hash_cu + ONCHAIN_BUFFER_CU
     }
 }
 
@@ -164,7 +181,7 @@ mod tests {
 
     #[test]
     fn test_epoch_validation() {
-        let verifier = OnchainVerifier::new(100);
+        let verifier = OnchainVerifier::new(100, [0u8; 32]);
 
         // Current epoch - valid
         assert!(verifier.is_valid_epoch(100));
@@ -181,7 +198,7 @@ mod tests {
 
     #[test]
     fn test_epoch_tolerance() {
-        let verifier = OnchainVerifier::new(100).with_epoch_tolerance(5);
+        let verifier = OnchainVerifier::new(100, [0u8; 32]).with_epoch_tolerance(5);
 
         assert!(verifier.is_valid_epoch(100));
         assert!(verifier.is_valid_epoch(95));
@@ -190,9 +207,10 @@ mod tests {
 
     #[test]
     fn test_verify_lightweight_proof() {
-        let verifier = OnchainVerifier::new(100);
+        let committed = [99u8; 32];
+        let verifier = OnchainVerifier::new(100, committed);
         let proof =
-            LightweightProof::from_commitment([1u8; 32], 100, vec![1, 1, 2, 3, 5, 8, 13, 21]);
+            LightweightProof::from_commitment([1u8; 32], 100, vec![1, 1, 2, 3, 5, 8, 13, 21], committed);
 
         let result = verifier.verify(&proof);
         assert!(result.is_valid());
@@ -200,17 +218,19 @@ mod tests {
 
     #[test]
     fn test_verify_with_expected_values() {
+        let committed = [99u8; 32];
         let verifier =
-            OnchainVerifier::new(100).with_expected_values(vec![1, 1, 2, 3, 5, 8, 13, 21]);
+            OnchainVerifier::new(100, committed).with_expected_values(vec![1, 1, 2, 3, 5, 8, 13, 21]);
 
         let good_proof =
-            LightweightProof::from_commitment([1u8; 32], 100, vec![1, 1, 2, 3, 5, 8, 13, 21]);
+            LightweightProof::from_commitment([1u8; 32], 100, vec![1, 1, 2, 3, 5, 8, 13, 21], committed);
         assert!(verifier.verify(&good_proof).is_valid());
 
         let bad_proof = LightweightProof::from_commitment(
             [1u8; 32],
             100,
             vec![1, 2, 3, 4, 5, 6, 7, 8], // Wrong values
+            committed,
         );
         assert_eq!(
             verifier.verify(&bad_proof),

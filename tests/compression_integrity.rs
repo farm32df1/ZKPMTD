@@ -1,4 +1,5 @@
 //! Compression integrity tests
+#![allow(deprecated)]
 
 use zkmtd::prelude::{CompressedProof, CompressionAlgorithm};
 use zkmtd::{Epoch, MTDProver, Prover, PublicInputs, StarkConfig, Verifier, Witness};

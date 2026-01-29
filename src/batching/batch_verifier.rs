@@ -1,11 +1,12 @@
 //! BatchVerifier - verifies proof batches with Merkle root and epoch checks
+#![allow(deprecated)]
 
 use crate::batching::merkle::{hash_leaf, MerkleTree};
 use crate::core::errors::{Result, ZKMTDError};
 use crate::core::traits::Verifier;
 use crate::core::types::{Proof, ProofBatch, PublicInputs};
 use crate::stark::prover::MTDVerifier as MTDVerifierInner;
-use crate::utils::hash::constant_time_eq;
+use crate::utils::hash::constant_time_eq_fixed;
 
 #[cfg(feature = "alloc")]
 use alloc::vec::Vec;
@@ -55,7 +56,7 @@ impl BatchVerifier {
 
         // 3. Merkle root verification (constant-time comparison)
         let computed_root = self.compute_merkle_root(&batch.proofs)?;
-        if !constant_time_eq(&computed_root, &batch.merkle_root) {
+        if !constant_time_eq_fixed(&computed_root, &batch.merkle_root) {
             return Ok(false);
         }
 
@@ -90,14 +91,15 @@ impl BatchVerifier {
             return Ok(false);
         }
 
-        // 2. Merkle path verification
+        // 2. Merkle path verification against batch's trusted merkle_root
         let leaves: Vec<_> = batch.proofs.iter().map(|p| hash_leaf(&p.data)).collect();
 
         let merkle_tree = MerkleTree::new(leaves)?;
         let merkle_proof = merkle_tree.get_proof(index)?;
 
         let leaf_hash = hash_leaf(&proof.data);
-        if !merkle_proof.verify(&leaf_hash) {
+        // SECURITY: Verify against the batch's merkle_root, not the proof's internal root
+        if !merkle_proof.verify_against(&leaf_hash, &batch.merkle_root) {
             return Ok(false);
         }
 

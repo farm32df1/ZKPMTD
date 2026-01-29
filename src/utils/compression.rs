@@ -35,7 +35,7 @@ impl CompressedProof {
         let original_size = original_data.len();
 
         // 1. Calculate checksum (before compression)
-        let checksum = poseidon_hash(original_data, b"COMPRESSION_CHECKSUM");
+        let checksum = poseidon_hash(original_data, crate::utils::constants::DOMAIN_COMPRESSION_CHECKSUM);
 
         // 2. Perform compression
         let compressed_data = match algorithm {
@@ -86,7 +86,7 @@ impl CompressedProof {
         }
 
         // 3. Checksum verification
-        let checksum = poseidon_hash(&decompressed_data, b"COMPRESSION_CHECKSUM");
+        let checksum = poseidon_hash(&decompressed_data, crate::utils::constants::DOMAIN_COMPRESSION_CHECKSUM);
         if checksum != self.checksum {
             return Err(ZKMTDError::SerializationError {
                 reason: "Checksum mismatch: data is corrupted".into(),
@@ -145,6 +145,14 @@ fn compress_rle(data: &[u8]) -> Result<Vec<u8>> {
 #[cfg(feature = "alloc")]
 #[allow(clippy::manual_is_multiple_of)]
 fn decompress_rle(data: &[u8]) -> Result<Vec<u8>> {
+    decompress_rle_with_limit(data, crate::utils::constants::MAX_RLE_DECOMPRESSED_SIZE)
+}
+
+/// RLE decompression with explicit memory limit to prevent DoS attacks.
+/// Returns an error if the decompressed size would exceed `max_output_size`.
+#[cfg(feature = "alloc")]
+#[allow(clippy::manual_is_multiple_of)]
+fn decompress_rle_with_limit(data: &[u8], max_output_size: usize) -> Result<Vec<u8>> {
     if data.is_empty() {
         return Ok(Vec::new());
     }
@@ -155,7 +163,24 @@ fn decompress_rle(data: &[u8]) -> Result<Vec<u8>> {
         });
     }
 
-    let mut decompressed = Vec::new();
+    // Pre-calculate total output size to prevent memory exhaustion
+    let mut total_size: usize = 0;
+    for chunk in data.chunks_exact(2) {
+        let count = chunk[1] as usize;
+        total_size = total_size.saturating_add(count);
+        if total_size > max_output_size {
+            return Err(ZKMTDError::SerializationError {
+                reason: alloc::format!(
+                    "RLE decompression would exceed maximum allowed size: {} > {}",
+                    total_size,
+                    max_output_size
+                ),
+            });
+        }
+    }
+
+    // Now perform actual decompression with known-safe size
+    let mut decompressed = Vec::with_capacity(total_size);
 
     for chunk in data.chunks_exact(2) {
         let value = chunk[0];
@@ -169,7 +194,8 @@ fn decompress_rle(data: &[u8]) -> Result<Vec<u8>> {
     Ok(decompressed)
 }
 
-pub fn select_compression_algorithm(data_size: usize, _target_chain: &str) -> CompressionAlgorithm {
+pub fn select_compression_algorithm(data_size: usize, target_chain: &str) -> CompressionAlgorithm {
+    let _ = target_chain;
     if data_size < 100 {
         CompressionAlgorithm::None
     } else {

@@ -16,9 +16,13 @@ Poseidon2 hash optimized for Goldilocks field. ZK-friendly with low multiplicati
 
 ### 2.3 Supported Circuits
 
-**Fibonacci AIR**: Verifies Fibonacci sequence computation. Trace format is [F(n), F(n+1)] per row.
+**Fibonacci AIR** (width=2): Verifies Fibonacci sequence computation. Trace format is [F(n), F(n+1)] per row.
 
-**Range AIR**: Proves value >= threshold without revealing actual value. Uses bit decomposition.
+**Sum AIR** (width=3): Proves `c = a + b` for each row. Independent row constraints.
+
+**Multiplication AIR** (width=3): Proves `c = a * b` for each row. Independent row constraints.
+
+**Range AIR** (width=35): Proves value >= threshold without revealing actual value. Uses 32-bit decomposition.
 
 ### 2.4 Proof Flow
 
@@ -98,13 +102,57 @@ Treat seed as cryptographic key. Generate securely, store safely, never transmit
 
 Prover and verifier must agree on epoch. Use NTP synchronized time.
 
-## 9. API Stability
+## 9. Committed Public Inputs (Privacy-by-Default)
 
-Stable: IntegratedProver, IntegratedVerifier, Epoch public methods.
+### 9.1 Overview
+
+All proofs commit public_values with a Poseidon2 salt before on-chain submission. There is no separate "standard mode" — privacy is the only mode.
+
+### 9.2 Commitment Scheme
+
+```
+committed_hash = Poseidon2(public_values || pv_salt, "ZKMTD::PV::Commit")
+binding_hash   = Poseidon2(public_values || committed_hash || value_count || epoch || params, "ZKMTD_BINDING")
+```
+
+Note: `value_count` (u32 LE) is included in the binding hash to prevent metadata manipulation (defense-in-depth).
+
+### 9.3 Salt Derivation
+
+```
+pv_salt = Poseidon2(seed || epoch || nonce, "ZKMTD::PV::Salt")
+```
+
+### 9.4 Key Types
+
+- `CommittedPublicInputs { commitment: [u8; 32], value_count: u32 }`
+- `IntegratedProof.committed_public_values: CommittedPublicInputs` (always present)
+- `IntegratedProof.pv_salt: Option<[u8; 32]>` (erasable for GDPR)
+
+### 9.5 API
+
+- `prove_fibonacci(num_rows, pv_salt)` — generates Fibonacci proof with committed public values
+- `prove_sum(a, b, pv_salt)` — generates Sum proof with committed public values
+- `prove_multiplication(a, b, pv_salt)` — generates Multiplication proof with committed public values
+- `prove_range(value, threshold, pv_salt)` — generates Range proof with committed public values
+- `verify(&proof)` — verifies binding hash + STARK proof (auto-dispatches by AIR type)
+- `verify_with_salt(&proof, values, salt)` — re-derives commitment and verifies
+
+### 9.6 GDPR Erasure
+
+Call `proof.erase_salt()` to securely zero and remove the salt using the `zeroize` crate (prevents compiler dead-store elimination). The proof remains verifiable via `verify()` but commitment reversal becomes impossible.
+
+Note: `pv_salt` is `pub(crate)` — external code must use `erase_salt()` for secure deletion and `has_salt()` for presence checks. The `Debug` implementation masks the salt as `<redacted>`.
+
+## 10. API Stability
+
+Stable: IntegratedProver, IntegratedVerifier, Epoch public methods, CommittedPublicInputs, ProofAirType.
+
+Deprecated: MTDProver, MTDVerifier (use IntegratedProver for production).
 
 Unstable: Internal serialization formats, configuration defaults.
 
-## 10. Extension Points
+## 11. Extension Points
 
 Custom AIR: Implement p3_air::Air trait.
 

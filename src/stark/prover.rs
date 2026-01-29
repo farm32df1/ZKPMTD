@@ -1,4 +1,5 @@
 //! MTD STARK Prover - simulation layer (use IntegratedProver for production)
+#![allow(deprecated)]
 
 use crate::core::errors::{Result, ZKMTDError};
 use crate::core::traits::Prover;
@@ -11,6 +12,7 @@ use crate::utils::hash::poseidon_hash;
 #[cfg(feature = "alloc")]
 use alloc::vec::Vec;
 
+#[deprecated(since = "0.2.0", note = "Use IntegratedProver for production")]
 #[derive(Debug)]
 pub struct MTDProver {
     config: StarkConfig,
@@ -101,7 +103,7 @@ impl MTDProver {
             }
 
             // 5. Add integrity hash (for tamper detection)
-            let integrity_hash = poseidon_hash(&proof_data, b"PROOF_INTEGRITY");
+            let integrity_hash = poseidon_hash(&proof_data, crate::utils::constants::DOMAIN_PROOF_INTEGRITY);
             proof_data.extend_from_slice(&integrity_hash);
 
             Ok(proof_data)
@@ -186,6 +188,7 @@ impl Prover for MTDProver {
     }
 }
 
+#[deprecated(since = "0.2.0", note = "Use IntegratedVerifier for production")]
 #[derive(Debug, Clone)]
 pub struct MTDVerifier {
     pub(crate) config: StarkConfig,
@@ -203,6 +206,7 @@ impl MTDVerifier {
 }
 
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
     use super::*;
     use crate::core::types::Witness;

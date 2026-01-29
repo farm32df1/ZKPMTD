@@ -126,8 +126,10 @@ pub struct MerklePath {
 
 #[cfg(feature = "alloc")]
 impl MerklePath {
+    /// Compute the root hash from this path and the given leaf.
+    /// Returns the computed root without comparing to any expected value.
     #[allow(clippy::manual_is_multiple_of)]
-    pub fn verify(&self, leaf: &HashDigest) -> bool {
+    pub fn compute_root(&self, leaf: &HashDigest) -> HashDigest {
         let mut current_hash = *leaf;
         let mut current_index = self.leaf_index;
 
@@ -142,7 +144,29 @@ impl MerklePath {
             current_index /= 2;
         }
 
-        current_hash == self.root
+        current_hash
+    }
+
+    /// Verify this path against an externally-provided trusted root.
+    /// This is the RECOMMENDED verification method for security-critical code.
+    ///
+    /// The `expected_root` should come from a trusted source (e.g., on-chain state,
+    /// signed batch header, etc.), NOT from the proof itself.
+    #[allow(clippy::manual_is_multiple_of)]
+    pub fn verify_against(&self, leaf: &HashDigest, expected_root: &HashDigest) -> bool {
+        use crate::utils::hash::constant_time_eq_fixed;
+        let computed_root = self.compute_root(leaf);
+        constant_time_eq_fixed(&computed_root, expected_root)
+    }
+
+    /// Verify this path against the internally stored root.
+    ///
+    /// WARNING: Only use this when the MerklePath was constructed internally
+    /// (e.g., from MerkleTree::get_proof()). For externally-provided paths,
+    /// use `verify_against()` with a trusted root instead.
+    #[allow(clippy::manual_is_multiple_of)]
+    pub fn verify(&self, leaf: &HashDigest) -> bool {
+        self.verify_against(leaf, &self.root)
     }
 
     pub fn len(&self) -> usize {

@@ -83,12 +83,6 @@ pub enum ZKMTDError {
         #[cfg(not(feature = "alloc"))]
         feature: &'static str,
     },
-    ResourceExhausted {
-        #[cfg(feature = "alloc")]
-        reason: String,
-        #[cfg(not(feature = "alloc"))]
-        reason: &'static str,
-    },
     ResourceLimitExceeded {
         #[cfg(feature = "alloc")]
         reason: String,
@@ -144,9 +138,6 @@ impl fmt::Display for ZKMTDError {
             }
             ZKMTDError::UnsupportedFeature { feature } => {
                 write!(f, "Unsupported feature: {}", feature)
-            }
-            ZKMTDError::ResourceExhausted { reason } => {
-                write!(f, "Resource exhausted: {}", reason)
             }
             ZKMTDError::ResourceLimitExceeded { reason } => {
                 write!(f, "Resource limit exceeded: {}", reason)

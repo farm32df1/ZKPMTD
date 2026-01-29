@@ -14,6 +14,12 @@ use p3_matrix::Matrix;
 
 pub const RANGE_BITS: usize = 32;
 
+/// Maximum value allowed for range proofs to prevent field overflow attacks.
+/// Both value and threshold must be < MAX_RANGE_VALUE to guarantee:
+/// 1. value - threshold doesn't wrap around in the Goldilocks field
+/// 2. diff fits in RANGE_BITS bits
+pub const MAX_RANGE_VALUE: u64 = 1u64 << RANGE_BITS; // 2^32
+
 #[derive(Debug, Clone)]
 pub struct RangeAir {
     num_bits: usize,
@@ -93,6 +99,32 @@ pub mod trace_builder {
         value: u64,
         threshold: u64,
     ) -> Result<RowMajorMatrix<Goldilocks>> {
+        // SOUNDNESS CHECK: Prevent field overflow attacks
+        // Both value and threshold must be bounded to ensure:
+        // 1. Integer subtraction doesn't underflow (value >= threshold)
+        // 2. Diff fits in RANGE_BITS bits (diff < 2^32)
+        // 3. No wraparound in Goldilocks field (both values < 2^32)
+
+        if value >= MAX_RANGE_VALUE {
+            return Err(ZKMTDError::InvalidWitness {
+                reason: alloc::format!(
+                    "Value {} exceeds maximum {} for range proofs",
+                    value,
+                    MAX_RANGE_VALUE - 1
+                ),
+            });
+        }
+
+        if threshold >= MAX_RANGE_VALUE {
+            return Err(ZKMTDError::InvalidWitness {
+                reason: alloc::format!(
+                    "Threshold {} exceeds maximum {} for range proofs",
+                    threshold,
+                    MAX_RANGE_VALUE - 1
+                ),
+            });
+        }
+
         if value < threshold {
             return Err(ZKMTDError::InvalidWitness {
                 reason: alloc::format!("Value {} is less than threshold {}", value, threshold),
@@ -101,6 +133,18 @@ pub mod trace_builder {
 
         let diff = value - threshold;
 
+        // Additional sanity check: diff must fit in RANGE_BITS
+        // This should always pass if value and threshold are properly bounded
+        if diff >= MAX_RANGE_VALUE {
+            return Err(ZKMTDError::InvalidWitness {
+                reason: alloc::format!(
+                    "Diff {} exceeds {}-bit range (this should not happen with bounded inputs)",
+                    diff,
+                    RANGE_BITS
+                ),
+            });
+        }
+
         // Decompose diff into bits
         let mut bits = Vec::with_capacity(RANGE_BITS);
         let mut remaining = diff;
@@ -108,6 +152,9 @@ pub mod trace_builder {
             bits.push(Goldilocks::from_canonical_u64(remaining & 1));
             remaining >>= 1;
         }
+
+        // Verify all bits were captured (remaining should be 0)
+        debug_assert_eq!(remaining, 0, "Diff exceeded RANGE_BITS after bounds check");
 
         // Build trace row: [bits..., value, threshold, diff]
         let mut row = bits;
@@ -175,6 +222,51 @@ mod tests {
         // Try to prove: 15 >= 18 (should fail)
         let result = build_range_proof_trace(15, 18);
         assert!(result.is_err());
+    }
+
+    #[cfg(feature = "alloc")]
+    #[test]
+    fn test_range_proof_rejects_overflow_attack() {
+        use trace_builder::build_range_proof_trace;
+
+        // CRITICAL SOUNDNESS TEST: Field overflow attack prevention
+        // If value > MAX_RANGE_VALUE, it should be rejected to prevent
+        // attacks where field wraparound creates false proofs.
+
+        // Attack scenario: value much larger than threshold but exceeds max
+        let large_value = MAX_RANGE_VALUE + 1000;
+        let result = build_range_proof_trace(large_value, 500);
+        assert!(result.is_err(), "Should reject value exceeding MAX_RANGE_VALUE");
+
+        // Attack scenario: threshold exceeds max
+        let result = build_range_proof_trace(1000, MAX_RANGE_VALUE + 1);
+        assert!(result.is_err(), "Should reject threshold exceeding MAX_RANGE_VALUE");
+
+        // Edge case: exactly at maximum (should fail)
+        let result = build_range_proof_trace(MAX_RANGE_VALUE, 500);
+        assert!(result.is_err(), "Should reject value equal to MAX_RANGE_VALUE");
+
+        // Valid case: just below maximum
+        let result = build_range_proof_trace(MAX_RANGE_VALUE - 1, 500);
+        assert!(result.is_ok(), "Should accept value just below MAX_RANGE_VALUE");
+    }
+
+    #[cfg(feature = "alloc")]
+    #[test]
+    fn test_range_proof_boundary_values() {
+        use trace_builder::build_range_proof_trace;
+
+        // Test boundary: value == threshold (diff = 0)
+        let result = build_range_proof_trace(1000, 1000);
+        assert!(result.is_ok(), "Should accept value == threshold");
+
+        // Test boundary: value == threshold == 0
+        let result = build_range_proof_trace(0, 0);
+        assert!(result.is_ok(), "Should accept 0 >= 0");
+
+        // Test boundary: large valid diff
+        let result = build_range_proof_trace(MAX_RANGE_VALUE - 1, 0);
+        assert!(result.is_ok(), "Should accept max diff within bounds");
     }
 
     #[cfg(feature = "alloc")]

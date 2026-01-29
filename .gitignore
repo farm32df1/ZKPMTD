@@ -1,0 +1,35 @@
+# Rust build artifacts
+/target/
+**/*.rs.bk
+*.pdb
+
+# Cargo.lock (library projects should not commit lock files)
+Cargo.lock
+
+# IDE and local config
+.vscode/
+.idea/
+.cursor/
+.claude/
+.cargo/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+
+# Environment
+.env
+.env.local
+*.log
+
+# Temporary files
+*.tmp
+*.temp
+
+# Fuzzing artifacts
+fuzz/target/
+fuzz/corpus/
+fuzz/artifacts/
+fuzz/coverage/

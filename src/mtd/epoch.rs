@@ -15,8 +15,29 @@ pub struct Epoch {
 }
 
 impl Epoch {
+    /// Create a new epoch with the given value.
+    ///
+    /// # Panics
+    /// Panics if value exceeds MAX_EPOCH. Use `try_new()` for fallible creation.
     pub fn new(value: u64) -> Self {
+        assert!(
+            value <= MAX_EPOCH,
+            "Epoch value {} exceeds MAX_EPOCH {}",
+            value,
+            MAX_EPOCH
+        );
         Self { value }
+    }
+
+    /// Create a new epoch, returning an error if value exceeds MAX_EPOCH.
+    pub fn try_new(value: u64) -> Result<Self> {
+        if value > MAX_EPOCH {
+            return Err(ZKMTDError::InvalidEpoch {
+                current: value,
+                reason: alloc::format!("Epoch value {} exceeds MAX_EPOCH {}", value, MAX_EPOCH),
+            });
+        }
+        Ok(Self { value })
     }
 
     pub fn from_timestamp(timestamp_secs: u64) -> Self {
@@ -82,11 +103,14 @@ impl Epoch {
     }
 
     pub fn start_timestamp(&self) -> u64 {
-        self.value * EPOCH_DURATION_SECS
+        self.value.saturating_mul(EPOCH_DURATION_SECS)
     }
 
     pub fn end_timestamp(&self) -> u64 {
-        (self.value + 1) * EPOCH_DURATION_SECS - 1
+        self.value
+            .saturating_add(1)
+            .saturating_mul(EPOCH_DURATION_SECS)
+            .saturating_sub(1)
     }
 
     pub fn contains_timestamp(&self, timestamp_secs: u64) -> bool {

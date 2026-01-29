@@ -1,4 +1,5 @@
 //! Integration tests for ZKMTD library
+#![allow(deprecated)]
 
 use zkmtd::batching::{create_proof_batch, BatchVerifier};
 use zkmtd::core::traits::BatchProver as BatchProverTrait;

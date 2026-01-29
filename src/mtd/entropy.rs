@@ -1,8 +1,18 @@
 //! Entropy sources for MTD - OS CSPRNG (std) and Solana slot hash (no_std)
 
-#[allow(unused_imports)]
+#[cfg(any(
+    feature = "std",
+    feature = "solana-adapter",
+    feature = "solana-program",
+    test
+))]
 use crate::core::errors::Result;
-#[allow(unused_imports)]
+#[cfg(any(
+    feature = "std",
+    feature = "solana-adapter",
+    feature = "solana-program",
+    test
+))]
 use crate::core::traits::EntropySource;
 
 #[cfg(any(
@@ -16,11 +26,15 @@ use crate::core::errors::ZKMTDError;
 #[cfg(feature = "std")]
 use crate::utils::constants::{MIN_ENTROPY_BITS, RECOMMENDED_ENTROPY_BITS};
 
-#[allow(unused_imports)]
-#[cfg(feature = "alloc")]
+#[cfg(all(
+    feature = "alloc",
+    any(feature = "std", feature = "solana-adapter", feature = "solana-program", test)
+))]
 use alloc::vec;
-#[allow(unused_imports)]
-#[cfg(feature = "alloc")]
+#[cfg(all(
+    feature = "alloc",
+    any(feature = "std", feature = "solana-adapter", feature = "solana-program", test)
+))]
 use alloc::vec::Vec;
 
 #[cfg(feature = "std")]
@@ -148,7 +162,7 @@ impl EntropySource for SolanaEntropy {
             entropy_input.extend_from_slice(&self.counter.to_le_bytes());
 
             // Generate entropy with Poseidon2 hash
-            let hash = poseidon_hash(&entropy_input, b"SOLANA_ENTROPY_V1");
+            let hash = poseidon_hash(&entropy_input, crate::utils::constants::DOMAIN_SOLANA_ENTROPY);
 
             // Fill output buffer (hash multiple times if needed)
             let mut offset = 0;
@@ -167,7 +181,7 @@ impl EntropySource for SolanaEntropy {
                     new_input.extend_from_slice(&self.program_id);
                     new_input.extend_from_slice(&local_counter.to_le_bytes());
 
-                    let new_hash = poseidon_hash(&new_input, b"SOLANA_ENTROPY_V1");
+                    let new_hash = poseidon_hash(&new_input, crate::utils::constants::DOMAIN_SOLANA_ENTROPY);
                     let remaining = output.len() - offset;
                     let copy_size = remaining.min(32);
                     output[offset..offset + copy_size].copy_from_slice(&new_hash[..copy_size]);
@@ -176,7 +190,7 @@ impl EntropySource for SolanaEntropy {
             }
 
             // Update counter (for next call)
-            self.counter += 1;
+            self.counter = self.counter.wrapping_add(1);
 
             Ok(())
         }
