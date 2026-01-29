@@ -28,8 +28,5 @@ Cargo.lock
 *.tmp
 *.temp
 
-# Fuzzing artifacts
-fuzz/target/
-fuzz/corpus/
-fuzz/artifacts/
-fuzz/coverage/
+# Fuzzing (entire folder)
+fuzz/
