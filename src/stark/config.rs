@@ -236,24 +236,124 @@ mod tests {
     }
 
     #[test]
+    fn test_config_builder_all_methods() {
+        let config = StarkConfig::builder()
+            .security_bits(100)
+            .fri_folding_factor(4)
+            .fri_queries(100)
+            .grinding_bits(10)
+            .blowup_factor(4)
+            .trace_height(1024)
+            .build()
+            .unwrap();
+
+        assert_eq!(config.security_bits, 100);
+        assert_eq!(config.fri_folding_factor, 4);
+        assert_eq!(config.fri_queries, 100);
+        assert_eq!(config.grinding_bits, 10);
+        assert_eq!(config.blowup_factor, 4);
+        assert_eq!(config.trace_height, 1024);
+    }
+
+    #[test]
+    fn test_config_builder_default() {
+        let builder = StarkConfigBuilder::default();
+        let config = builder.build().unwrap();
+        assert_eq!(config, StarkConfig::default());
+    }
+
+    #[test]
     fn test_invalid_security_bits() {
         let config = StarkConfig::builder().security_bits(50).build();
         assert!(config.is_err());
     }
 
     #[test]
+    fn test_invalid_security_bits_too_high() {
+        let config = StarkConfig::builder().security_bits(300).build();
+        assert!(config.is_err());
+    }
+
+    #[test]
     fn test_invalid_fri_folding() {
         let config = StarkConfig {
-            fri_folding_factor: 3, // Invalid value
+            fri_folding_factor: 3,
             ..StarkConfig::default()
         };
         assert!(config.validate().is_err());
     }
 
     #[test]
+    fn test_valid_fri_folding_factors() {
+        for factor in [2, 4, 8, 16] {
+            let config = StarkConfig {
+                fri_folding_factor: factor,
+                ..StarkConfig::default()
+            };
+            assert!(config.validate().is_ok());
+        }
+    }
+
+    #[test]
+    fn test_invalid_fri_queries_too_few() {
+        let config = StarkConfig {
+            fri_queries: 10,
+            ..StarkConfig::default()
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_invalid_fri_queries_too_many() {
+        let config = StarkConfig {
+            fri_queries: 600,
+            ..StarkConfig::default()
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_invalid_grinding_bits() {
+        let config = StarkConfig {
+            grinding_bits: 50,
+            ..StarkConfig::default()
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_invalid_blowup_factor() {
+        let config = StarkConfig {
+            blowup_factor: 3,
+            ..StarkConfig::default()
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_valid_blowup_factors() {
+        for factor in [2, 4, 8, 16] {
+            let config = StarkConfig {
+                blowup_factor: factor,
+                ..StarkConfig::default()
+            };
+            assert!(config.validate().is_ok());
+        }
+    }
+
+    #[test]
     fn test_invalid_trace_height() {
         let config = StarkConfig {
-            trace_height: 1000, // Not a power of 2
+            trace_height: 1000,
+            ..StarkConfig::default()
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_invalid_trace_height_too_small() {
+        let config = StarkConfig {
+            trace_height: 32,
             ..StarkConfig::default()
         };
         assert!(config.validate().is_err());
@@ -264,7 +364,14 @@ mod tests {
         let config = StarkConfig::default();
         let size = config.estimated_proof_size();
         assert!(size > 0);
-        assert!(size < 100_000); // Reasonable range
+        assert!(size < 100_000);
+    }
+
+    #[test]
+    fn test_estimated_proof_size_comparison() {
+        let small = StarkConfig::for_testing();
+        let large = StarkConfig::high_security();
+        assert!(small.estimated_proof_size() < large.estimated_proof_size());
     }
 
     #[test]
@@ -272,6 +379,41 @@ mod tests {
         let config = StarkConfig::default();
         let time = config.estimated_proving_time_ms();
         assert!(time > 0);
-        assert!(time < 10_000); // Less than 10 seconds
+        assert!(time < 10_000);
+    }
+
+    #[test]
+    fn test_estimated_proving_time_comparison() {
+        let small = StarkConfig::for_testing();
+        let large = StarkConfig::high_security();
+        assert!(small.estimated_proving_time_ms() < large.estimated_proving_time_ms());
+    }
+
+    #[test]
+    fn test_config_clone() {
+        let config = StarkConfig::default();
+        let cloned = config.clone();
+        assert_eq!(config, cloned);
+    }
+
+    #[test]
+    fn test_config_debug() {
+        let config = StarkConfig::default();
+        let debug = alloc::format!("{:?}", config);
+        assert!(debug.contains("StarkConfig"));
+    }
+
+    #[test]
+    fn test_builder_debug() {
+        let builder = StarkConfig::builder();
+        let debug = alloc::format!("{:?}", builder);
+        assert!(debug.contains("StarkConfigBuilder"));
+    }
+
+    #[test]
+    fn test_builder_clone() {
+        let builder = StarkConfig::builder().security_bits(100);
+        let cloned = builder.clone();
+        assert!(cloned.build().is_ok());
     }
 }

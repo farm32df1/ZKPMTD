@@ -63,8 +63,8 @@ pub trait BatchProver: Prover {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
-    // Dummy implementation for testing
     struct DummyProver;
 
     impl Prover for DummyProver {
@@ -89,6 +89,35 @@ mod tests {
         }
     }
 
+    struct FailingVerifier;
+
+    impl Verifier for FailingVerifier {
+        fn verify(&self, _proof: &Proof, _public_inputs: &PublicInputs) -> Result<bool> {
+            Err(ZKMTDError::VerificationFailed {
+                reason: "test error".into(),
+            })
+        }
+    }
+
+    struct DummyEntropy;
+
+    impl EntropySource for DummyEntropy {
+        #[cfg(feature = "alloc")]
+        fn generate(&mut self, num_bytes: usize) -> Result<Vec<u8>> {
+            Ok(vec![0u8; num_bytes])
+        }
+
+        fn fill_bytes(&mut self, output: &mut [u8]) -> Result<()> {
+            output.fill(0);
+            Ok(())
+        }
+
+        fn entropy_bits(&self) -> usize {
+            128
+        }
+        // Uses default is_cryptographically_secure() -> false
+    }
+
     #[test]
     fn test_prover_trait() {
         let prover = DummyProver;
@@ -97,10 +126,71 @@ mod tests {
     }
 
     #[test]
+    fn test_prover_prove() {
+        let prover = DummyProver;
+        let witness = Witness::default();
+        let inputs = PublicInputs::default();
+        assert!(prover.prove(&witness, &inputs).is_ok());
+    }
+
+    #[test]
     fn test_verifier_trait() {
         let verifier = DummyVerifier;
         let proof = Proof::default();
         let public_inputs = PublicInputs::default();
         assert!(verifier.verify(&proof, &public_inputs).unwrap());
+    }
+
+    #[test]
+    fn test_verifier_batch_success() {
+        let verifier = DummyVerifier;
+        let proofs = vec![Proof::default(), Proof::default()];
+        let inputs = vec![PublicInputs::default(), PublicInputs::default()];
+
+        let results = verifier.verify_batch(&proofs, &inputs).unwrap();
+        assert_eq!(results.len(), 2);
+        assert!(results.iter().all(|&r| r));
+    }
+
+    #[test]
+    fn test_verifier_batch_mismatched() {
+        let verifier = DummyVerifier;
+        let proofs = vec![Proof::default(), Proof::default()];
+        let inputs = vec![PublicInputs::default()];
+
+        let result = verifier.verify_batch(&proofs, &inputs);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_verifier_batch_error_propagation() {
+        let verifier = FailingVerifier;
+        let proofs = vec![Proof::default()];
+        let inputs = vec![PublicInputs::default()];
+
+        let result = verifier.verify_batch(&proofs, &inputs);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_entropy_default_not_secure() {
+        let entropy = DummyEntropy;
+        assert!(!entropy.is_cryptographically_secure());
+        assert_eq!(entropy.entropy_bits(), 128);
+    }
+
+    #[test]
+    fn test_entropy_generate() {
+        let mut entropy = DummyEntropy;
+        let bytes = entropy.generate(16).unwrap();
+        assert_eq!(bytes.len(), 16);
+    }
+
+    #[test]
+    fn test_entropy_fill_bytes() {
+        let mut entropy = DummyEntropy;
+        let mut buf = [1u8; 8];
+        entropy.fill_bytes(&mut buf).unwrap();
+        assert_eq!(buf, [0u8; 8]);
     }
 }

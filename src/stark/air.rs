@@ -226,9 +226,57 @@ mod tests {
     #[test]
     fn test_simple_air_fibonacci() {
         let air = SimpleAir::fibonacci();
-        assert_eq!(air.num_columns(), 2); // [F(n), F(n+1)]
+        assert_eq!(air.num_columns(), 2);
         assert_eq!(air.num_constraints(), 1);
         assert_eq!(air.constraint_degree(), 1);
+    }
+
+    #[test]
+    fn test_simple_air_sum() {
+        let air = SimpleAir::sum();
+        assert_eq!(air.num_columns(), 3);
+        assert_eq!(air.num_constraints(), 1);
+        assert_eq!(air.constraint_degree(), 1);
+    }
+
+    #[test]
+    fn test_simple_air_multiplication() {
+        let air = SimpleAir::multiplication();
+        assert_eq!(air.num_columns(), 3);
+        assert_eq!(air.num_constraints(), 1);
+        assert_eq!(air.constraint_degree(), 2);
+    }
+
+    #[test]
+    fn test_base_air_width() {
+        let fib = SimpleAir::fibonacci();
+        let sum = SimpleAir::sum();
+        let mul = SimpleAir::multiplication();
+
+        assert_eq!(BaseAir::<Goldilocks>::width(&fib), 2);
+        assert_eq!(BaseAir::<Goldilocks>::width(&sum), 3);
+        assert_eq!(BaseAir::<Goldilocks>::width(&mul), 3);
+    }
+
+    #[test]
+    fn test_air_type_equality() {
+        assert_eq!(AirType::Fibonacci, AirType::Fibonacci);
+        assert_ne!(AirType::Fibonacci, AirType::Sum);
+        assert_ne!(AirType::Sum, AirType::Multiplication);
+    }
+
+    #[test]
+    fn test_air_type_debug() {
+        let t = AirType::Fibonacci;
+        let debug = alloc::format!("{:?}", t);
+        assert!(debug.contains("Fibonacci"));
+    }
+
+    #[test]
+    fn test_simple_air_clone() {
+        let air = SimpleAir::fibonacci();
+        let cloned = air.clone();
+        assert_eq!(air.num_columns(), cloned.num_columns());
     }
 
     #[cfg(feature = "alloc")]
@@ -246,16 +294,57 @@ mod tests {
 
     #[cfg(feature = "alloc")]
     #[test]
+    fn test_fibonacci_trace_not_power_of_two() {
+        let result = build_fibonacci_trace(7, [0, 1]);
+        assert!(result.is_err());
+    }
+
+    #[cfg(feature = "alloc")]
+    #[test]
+    fn test_fibonacci_trace_too_small() {
+        let result = build_fibonacci_trace(1, [0, 1]);
+        assert!(result.is_err());
+    }
+
+    #[cfg(feature = "alloc")]
+    #[test]
+    fn test_fibonacci_trace_p3() {
+        let matrix = build_fibonacci_trace_p3(8).unwrap();
+        assert_eq!(matrix.width(), 2);
+        assert_eq!(matrix.height(), 8);
+    }
+
+    #[cfg(feature = "alloc")]
+    #[test]
+    fn test_fibonacci_trace_p3_not_power_of_two() {
+        let result = build_fibonacci_trace_p3(7);
+        assert!(result.is_err());
+    }
+
+    #[cfg(feature = "alloc")]
+    #[test]
     fn test_fibonacci_constraints() {
         let air = SimpleAir::fibonacci();
         let trace = build_fibonacci_trace(8, [0, 1]).unwrap();
 
-        // Constraint must be satisfied in all rows
         for row in 0..(trace[0].len() - 2) {
             let constraints = air.evaluate_constraints(&trace, row);
             assert_eq!(constraints.len(), 1);
             assert_eq!(constraints[0], 0, "Constraint not satisfied at row {}", row);
         }
+    }
+
+    #[cfg(feature = "alloc")]
+    #[test]
+    fn test_fibonacci_constraints_last_rows() {
+        let air = SimpleAir::fibonacci();
+        let trace = build_fibonacci_trace(8, [0, 1]).unwrap();
+
+        // Last two rows should return empty constraints
+        let constraints = air.evaluate_constraints(&trace, 6);
+        assert!(constraints.is_empty());
+        let constraints = air.evaluate_constraints(&trace, 7);
+        assert!(constraints.is_empty());
     }
 
     #[cfg(feature = "alloc")]
@@ -266,10 +355,32 @@ mod tests {
         let trace = build_sum_trace(a, b).unwrap();
 
         assert_eq!(trace.len(), 3);
-        assert_eq!(trace[2][0], 6); // 1 + 5
-        assert_eq!(trace[2][1], 8); // 2 + 6
-        assert_eq!(trace[2][2], 10); // 3 + 7
-        assert_eq!(trace[2][3], 12); // 4 + 8
+        assert_eq!(trace[2][0], 6);
+        assert_eq!(trace[2][1], 8);
+        assert_eq!(trace[2][2], 10);
+        assert_eq!(trace[2][3], 12);
+    }
+
+    #[cfg(feature = "alloc")]
+    #[test]
+    fn test_sum_trace_mismatched() {
+        let a = vec![1, 2, 3];
+        let b = vec![4, 5];
+        let result = build_sum_trace(a, b);
+        assert!(result.is_err());
+    }
+
+    #[cfg(feature = "alloc")]
+    #[test]
+    fn test_sum_constraints() {
+        let air = SimpleAir::sum();
+        let trace = build_sum_trace(vec![1, 2], vec![3, 4]).unwrap();
+
+        for row in 0..trace[0].len() {
+            let constraints = air.evaluate_constraints(&trace, row);
+            assert_eq!(constraints.len(), 1);
+            assert_eq!(constraints[0], 0);
+        }
     }
 
     #[cfg(feature = "alloc")]
@@ -280,9 +391,41 @@ mod tests {
         let trace = build_multiplication_trace(a, b).unwrap();
 
         assert_eq!(trace.len(), 3);
-        assert_eq!(trace[2][0], 6); // 2 * 3
-        assert_eq!(trace[2][1], 12); // 3 * 4
-        assert_eq!(trace[2][2], 20); // 4 * 5
-        assert_eq!(trace[2][3], 30); // 5 * 6
+        assert_eq!(trace[2][0], 6);
+        assert_eq!(trace[2][1], 12);
+        assert_eq!(trace[2][2], 20);
+        assert_eq!(trace[2][3], 30);
+    }
+
+    #[cfg(feature = "alloc")]
+    #[test]
+    fn test_multiplication_trace_mismatched() {
+        let a = vec![1, 2, 3];
+        let b = vec![4, 5];
+        let result = build_multiplication_trace(a, b);
+        assert!(result.is_err());
+    }
+
+    #[cfg(feature = "alloc")]
+    #[test]
+    fn test_multiplication_constraints() {
+        let air = SimpleAir::multiplication();
+        let trace = build_multiplication_trace(vec![2, 3], vec![4, 5]).unwrap();
+
+        for row in 0..trace[0].len() {
+            let constraints = air.evaluate_constraints(&trace, row);
+            assert_eq!(constraints.len(), 1);
+            assert_eq!(constraints[0], 0);
+        }
+    }
+
+    #[cfg(feature = "alloc")]
+    #[test]
+    fn test_evaluate_constraints_insufficient_trace() {
+        let air = SimpleAir::sum();
+        let trace: Vec<Vec<u64>> = vec![vec![1, 2]]; // Only 1 column, need 3
+
+        let constraints = air.evaluate_constraints(&trace, 0);
+        assert!(constraints.is_empty());
     }
 }

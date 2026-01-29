@@ -151,10 +151,11 @@ impl BatchLightweightProof {
     }
 }
 
-#[cfg(all(test, feature = "alloc", feature = "borsh"))]
+#[cfg(all(test, feature = "alloc"))]
 mod tests {
     use super::*;
 
+    #[cfg(feature = "borsh")]
     #[test]
     fn test_lightweight_proof_serialization() {
         let proof = LightweightProof::new(
@@ -184,5 +185,226 @@ mod tests {
     #[test]
     fn test_estimated_cu() {
         assert!(LightweightProof::estimated_cu() < 200_000);
+    }
+
+    #[test]
+    fn test_lightweight_proof_new() {
+        let proof = LightweightProof::new(
+            [1u8; 32],
+            [2u8; 32],
+            100,
+            1234567890,
+            vec![1, 2, 3, 4],
+            [3u8; 32],
+        );
+
+        assert_eq!(proof.commitment, [1u8; 32]);
+        assert_eq!(proof.merkle_root, [2u8; 32]);
+        assert_eq!(proof.epoch, 100);
+        assert_eq!(proof.timestamp, 1234567890);
+        assert_eq!(proof.public_values, vec![1, 2, 3, 4]);
+        assert_eq!(proof.committed_values, [3u8; 32]);
+    }
+
+    #[test]
+    fn test_lightweight_proof_from_commitment() {
+        let commitment = [5u8; 32];
+        let proof = LightweightProof::from_commitment(
+            commitment,
+            200,
+            vec![10, 20, 30],
+            [6u8; 32],
+        );
+
+        assert_eq!(proof.commitment, commitment);
+        assert_eq!(proof.merkle_root, commitment); // Single proof: merkle_root == commitment
+        assert_eq!(proof.epoch, 200);
+        assert_eq!(proof.timestamp, 0); // Default timestamp
+        assert_eq!(proof.public_values, vec![10, 20, 30]);
+        assert_eq!(proof.committed_values, [6u8; 32]);
+    }
+
+    #[test]
+    fn test_proof_commitment_from_data() {
+        let data = b"some proof data";
+        let seed = b"my_secret_seed";
+        let commitment = ProofCommitment::from_data(data, 50, seed);
+
+        assert_eq!(commitment.epoch, 50);
+        assert_ne!(commitment.hash, [0u8; 32]);
+        assert_ne!(commitment.seed_fingerprint, 0);
+    }
+
+    #[test]
+    fn test_proof_commitment_deterministic() {
+        let data = b"proof data";
+        let seed = b"seed";
+
+        let c1 = ProofCommitment::from_data(data, 100, seed);
+        let c2 = ProofCommitment::from_data(data, 100, seed);
+
+        assert_eq!(c1.hash, c2.hash);
+        assert_eq!(c1.seed_fingerprint, c2.seed_fingerprint);
+    }
+
+    #[test]
+    fn test_proof_commitment_different_data() {
+        let seed = b"seed";
+        let c1 = ProofCommitment::from_data(b"data1", 100, seed);
+        let c2 = ProofCommitment::from_data(b"data2", 100, seed);
+
+        assert_ne!(c1.hash, c2.hash);
+    }
+
+    #[test]
+    fn test_proof_commitment_different_seed() {
+        let data = b"proof data";
+        let c1 = ProofCommitment::from_data(data, 100, b"seed1");
+        let c2 = ProofCommitment::from_data(data, 100, b"seed2");
+
+        assert_ne!(c1.seed_fingerprint, c2.seed_fingerprint);
+    }
+
+    #[test]
+    fn test_batch_lightweight_proof_verify_inclusion() {
+        use crate::utils::constants::DOMAIN_MERKLE;
+        use crate::utils::hash::poseidon_hash;
+
+        // Build a simple Merkle tree manually
+        let leaf0 = [1u8; 32];
+        let leaf1 = [2u8; 32];
+
+        let combined = [leaf0.as_slice(), leaf1.as_slice()].concat();
+        let root = poseidon_hash(&combined, DOMAIN_MERKLE);
+
+        // Create batch proof for leaf0
+        let batch_proof = BatchLightweightProof {
+            merkle_root: root,
+            proof_count: 2,
+            epoch: 100,
+            merkle_path: vec![leaf1],
+            leaf_index: 0,
+            leaf_commitment: leaf0,
+        };
+
+        assert!(batch_proof.verify_inclusion());
+    }
+
+    #[test]
+    fn test_batch_lightweight_proof_verify_inclusion_right_leaf() {
+        use crate::utils::constants::DOMAIN_MERKLE;
+        use crate::utils::hash::poseidon_hash;
+
+        let leaf0 = [1u8; 32];
+        let leaf1 = [2u8; 32];
+
+        let combined = [leaf0.as_slice(), leaf1.as_slice()].concat();
+        let root = poseidon_hash(&combined, DOMAIN_MERKLE);
+
+        // Create batch proof for leaf1 (index 1, odd)
+        let batch_proof = BatchLightweightProof {
+            merkle_root: root,
+            proof_count: 2,
+            epoch: 100,
+            merkle_path: vec![leaf0],
+            leaf_index: 1,
+            leaf_commitment: leaf1,
+        };
+
+        assert!(batch_proof.verify_inclusion());
+    }
+
+    #[test]
+    fn test_batch_lightweight_proof_verify_inclusion_invalid() {
+        let batch_proof = BatchLightweightProof {
+            merkle_root: [1u8; 32],
+            proof_count: 2,
+            epoch: 100,
+            merkle_path: vec![[2u8; 32]],
+            leaf_index: 0,
+            leaf_commitment: [3u8; 32], // Wrong leaf
+        };
+
+        assert!(!batch_proof.verify_inclusion());
+    }
+
+    #[test]
+    fn test_batch_lightweight_proof_estimated_cu() {
+        let batch_proof = BatchLightweightProof {
+            merkle_root: [1u8; 32],
+            proof_count: 4,
+            epoch: 100,
+            merkle_path: vec![[2u8; 32], [3u8; 32]], // depth = 2
+            leaf_index: 0,
+            leaf_commitment: [4u8; 32],
+        };
+
+        let cu = batch_proof.estimated_cu();
+        // 500 + (2 * 300) = 1100
+        assert_eq!(cu, 1100);
+    }
+
+    #[test]
+    fn test_batch_lightweight_proof_estimated_cu_deeper() {
+        let batch_proof = BatchLightweightProof {
+            merkle_root: [1u8; 32],
+            proof_count: 16,
+            epoch: 100,
+            merkle_path: vec![[2u8; 32], [3u8; 32], [4u8; 32], [5u8; 32]], // depth = 4
+            leaf_index: 0,
+            leaf_commitment: [6u8; 32],
+        };
+
+        let cu = batch_proof.estimated_cu();
+        // 500 + (4 * 300) = 1700
+        assert_eq!(cu, 1700);
+    }
+
+    #[test]
+    fn test_lightweight_proof_clone_debug() {
+        let proof = LightweightProof::new(
+            [1u8; 32],
+            [2u8; 32],
+            100,
+            12345,
+            vec![1, 2],
+            [3u8; 32],
+        );
+
+        let cloned = proof.clone();
+        assert_eq!(proof, cloned);
+
+        let debug = format!("{:?}", proof);
+        assert!(debug.contains("LightweightProof"));
+    }
+
+    #[test]
+    fn test_proof_commitment_clone_debug() {
+        let commitment = ProofCommitment::from_data(b"data", 100, b"seed");
+        let cloned = commitment.clone();
+
+        assert_eq!(commitment.hash, cloned.hash);
+        assert_eq!(commitment.epoch, cloned.epoch);
+
+        let debug = format!("{:?}", commitment);
+        assert!(debug.contains("ProofCommitment"));
+    }
+
+    #[test]
+    fn test_batch_lightweight_proof_clone_debug() {
+        let batch = BatchLightweightProof {
+            merkle_root: [1u8; 32],
+            proof_count: 2,
+            epoch: 100,
+            merkle_path: vec![[2u8; 32]],
+            leaf_index: 0,
+            leaf_commitment: [3u8; 32],
+        };
+
+        let cloned = batch.clone();
+        assert_eq!(batch.merkle_root, cloned.merkle_root);
+
+        let debug = format!("{:?}", batch);
+        assert!(debug.contains("BatchLightweightProof"));
     }
 }
