@@ -2,6 +2,7 @@
 //!
 //! Example demonstrating Moving Target Defense behavior.
 //! Shows how different parameters are generated with each epoch change.
+#![allow(deprecated)]
 
 use zkmtd::{Epoch, MTDManager, MTDProver, Prover, PublicInputs, StarkConfig, Witness};
 

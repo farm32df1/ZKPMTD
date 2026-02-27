@@ -1,6 +1,7 @@
 //! # STARK Benchmark
 //!
 //! Measures STARK proof generation and verification performance.
+#![allow(deprecated)]
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use zkmtd::{Epoch, MTDProver, Prover, PublicInputs, StarkConfig, Verifier, Witness};

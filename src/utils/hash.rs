@@ -620,7 +620,7 @@ mod tests {
         let mut state1 = [F::zero(); 16];
         state1[0] = F::from_canonical_u64(0x123456789ABCDEF0);
 
-        let original = state1.clone();
+        let original = state1;
 
         // Apply permutation
         permute(&mut state1, 8);
@@ -717,8 +717,8 @@ mod tests {
 
         // Test that our permutation produces valid field elements
         let mut state = [F::zero(); 16];
-        for i in 0..16 {
-            state[i] = F::from_canonical_u64(i as u64 * 12345);
+        for (i, elem) in state.iter_mut().enumerate() {
+            *elem = F::from_canonical_u64(i as u64 * 12345);
         }
 
         permute(&mut state, 8);

@@ -341,6 +341,7 @@ impl IntegratedProof {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     /// Helper: generate a deterministic test salt
     fn test_salt() -> [u8; 32] {

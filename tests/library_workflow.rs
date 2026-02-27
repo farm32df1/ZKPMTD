@@ -10,8 +10,6 @@ use zkmtd::stark::prover::MTDProver;
 use zkmtd::utils::hash::poseidon_hash;
 use zkmtd::{Prover, PublicInputs, Verifier, Witness};
 
-#[cfg(feature = "solana-program")]
-use zkmtd::solana::{LightweightProof, OnchainVerifier, ProofCommitment};
 
 /// Simulates user's sensitive data that should never leave the device
 struct UserSensitiveData {

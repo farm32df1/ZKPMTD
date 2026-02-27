@@ -1,6 +1,7 @@
 //! # Cross-Chain Benchmark
 //!
 //! Compares cost metrics across various blockchains.
+#![allow(deprecated)]
 
 use std::time::Instant;
 use zkmtd::prelude::{CompressedProof, CompressionAlgorithm};
@@ -262,14 +263,11 @@ fn estimate_near_tgas(proof_size: usize) -> u64 {
 fn format_number(n: u64) -> String {
     let s = n.to_string();
     let mut result = String::new();
-    let mut count = 0;
-
-    for ch in s.chars().rev() {
+    for (count, ch) in s.chars().rev().enumerate() {
         if count > 0 && count % 3 == 0 {
             result.push(',');
         }
         result.push(ch);
-        count += 1;
     }
 
     result.chars().rev().collect()

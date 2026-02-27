@@ -1,6 +1,7 @@
 //! # Basic Proof Example
 //!
 //! Basic proof generation and verification example using ZKMTD.
+#![allow(deprecated)]
 
 use zkmtd::{MTDProver, Prover, PublicInputs, StarkConfig, SystemEntropy, Verifier, Witness};
 

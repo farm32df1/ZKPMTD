@@ -1,6 +1,7 @@
 //! # Solana CU Estimation Example
 //!
 //! Shows expected CU consumption in various scenarios.
+#![allow(deprecated)]
 
 use std::time::Instant;
 use zkmtd::batching::{create_proof_batch, BatchVerifier};

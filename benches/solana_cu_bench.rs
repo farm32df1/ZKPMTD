@@ -3,6 +3,7 @@
 //! Estimates CU (Compute Units) consumption in Solana environment.
 //! Actual on-chain measurement should be done in Solana program,
 //! but this benchmark provides off-chain approximation.
+#![allow(deprecated)]
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use zkmtd::batching::{create_proof_batch, BatchVerifier};
@@ -76,7 +77,8 @@ fn bench_batch_verification_cu(c: &mut Criterion) {
 fn bench_deserialization_cu(_c: &mut Criterion) {
     #[cfg(feature = "solana-adapter")]
     {
-        use zkmtd::adapters::{solana::SolanaAdapter, ChainAdapter};
+        use zkmtd::adapters::{solana::SolanaAdapter, SolanaChainAdapter};
+        let c = _c;
 
         let seed = b"cu-deser-seed";
         let config = StarkConfig::for_testing();
