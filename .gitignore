@@ -34,3 +34,8 @@ fuzz/
 # Throwaway red-team / PoC test files (never commit)
 tests/zzz_*.rs
 tests/*_poc.rs
+
+# Recovered/throwaway red-team exploit PoCs — NEVER commit to this public repo
+recovered_poc/
+**/zzz_*.rs
+*_redteam*.rs
