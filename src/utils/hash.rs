@@ -72,41 +72,31 @@ pub fn poseidon_hash(data: &[u8], domain: &[u8]) -> HashDigest {
     const WIDTH: usize = 16;
     const RATE: usize = 8;
 
+    // Bytes per permutation: RATE lanes of BYTES_PER_FIELD bytes each.
+    const BLOCK: usize = BYTES_PER_FIELD * RATE;
+
     let perm = get_poseidon2();
     let mut state = [F::ZERO; WIDTH];
 
-    // 1. Domain separation: absorb domain into the rate region, then permute.
-    //    Bytes are packed BYTES_PER_FIELD (=7) at a time so the encoding is
-    //    injective (no field-order wraparound collisions, C-3).
-    for (i, chunk) in domain.chunks(BYTES_PER_FIELD).enumerate() {
-        if i >= RATE {
-            break;
-        }
-        state[i] = F::from_u64(bytes_to_field(chunk));
-    }
-
-    // First permutation (domain separation)
-    perm.permute_mut(&mut state);
-
-    // 2. Length encoding (C-4): absorb the message length before the data so
-    //    that trailing zero bytes and partial final blocks cannot collide
-    //    (length-extension-style collisions) in this padding-free sponge.
-    state[0] += F::from_u64(data.len() as u64);
-    perm.permute_mut(&mut state);
-
-    // 3. Data absorption: BYTES_PER_FIELD bytes per rate lane, RATE lanes per
-    //    permutation.
-    for chunk in data.chunks(BYTES_PER_FIELD * RATE) {
-        for (i, bytes_chunk) in chunk.chunks(BYTES_PER_FIELD).enumerate() {
-            if i >= RATE {
-                break;
-            }
-            state[i] += F::from_u64(bytes_to_field(bytes_chunk));
-        }
+    // Absorb the domain, then the data — each as a length-prefixed, fully
+    // consumed byte string, BYTES_PER_FIELD bytes per rate lane:
+    // - 7-byte lanes keep the byte->field encoding injective (C-3),
+    // - the length prefix stops trailing-zero / partial-block collisions (C-4),
+    // - absorbing EVERY byte (no `break` at RATE) stops two domains/messages
+    //   that share a 56-byte prefix from colliding (M-A), and the per-region
+    //   length prefix keeps the domain and data fields separated.
+    for region in [domain, data] {
+        state[0] += F::from_u64(region.len() as u64);
         perm.permute_mut(&mut state);
+        for block in region.chunks(BLOCK) {
+            for (i, lane) in block.chunks(BYTES_PER_FIELD).enumerate() {
+                state[i] += F::from_u64(bytes_to_field(lane));
+            }
+            perm.permute_mut(&mut state);
+        }
     }
 
-    // 3. Output squeezing: generate 32 bytes from first 4 field elements
+    // Output squeezing: 32 bytes from the first 4 rate lanes.
     let mut result = [0u8; 32];
     for i in 0..4 {
         let bytes = state[i].as_canonical_u64().to_le_bytes();
@@ -124,17 +114,18 @@ fn permute(state: &mut [Goldilocks; 16], _rounds: usize) {
     perm.permute_mut(state);
 }
 
-/// Derive a single field element from a full hash digest.
+/// Derive a single field element from a hash digest.
 ///
-/// Folds every `BYTES_PER_FIELD`-byte limb of the digest in the Goldilocks
-/// field so all 32 bytes of entropy contribute (rather than truncating to a
-/// single limb).
+/// The digest is already uniformly random, so we reduce its first 8 bytes
+/// modulo the field order. This is collision-resistant (two digests collide
+/// only if their leading 8 bytes agree mod p, ≈ 2^-64). NOTE: summing the
+/// digest limbs in the field instead would be *linear* and therefore trivially
+/// collidable (e.g. `byte[0]=1` and `byte[7]=1` map to the same element) — see
+/// red-team finding H-B; do not reintroduce that.
 pub fn hash_to_field(hash: &HashDigest) -> FieldElement {
-    let mut acc = F::ZERO;
-    for chunk in hash.chunks(BYTES_PER_FIELD) {
-        acc += F::from_u64(bytes_to_field(chunk));
-    }
-    acc.as_canonical_u64()
+    let mut limb = [0u8; 8];
+    limb.copy_from_slice(&hash[..8]);
+    u64::from_le_bytes(limb) % F::ORDER_U64
 }
 
 pub fn combine_hashes(left: &HashDigest, right: &HashDigest, domain: &[u8]) -> HashDigest {

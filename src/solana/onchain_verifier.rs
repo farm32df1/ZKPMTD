@@ -36,6 +36,9 @@ pub struct OnchainVerifier {
     #[cfg(feature = "alloc")]
     expected_public_values: Option<Vec<u64>>,
     expected_committed_values: [u8; 32],
+    /// Trusted batch Merkle root (C-A). MUST come from a trusted source
+    /// (on-chain state / signed header), never from the submitted proof.
+    expected_merkle_root: Option<[u8; 32]>,
 }
 
 impl OnchainVerifier {
@@ -46,7 +49,16 @@ impl OnchainVerifier {
             #[cfg(feature = "alloc")]
             expected_public_values: None,
             expected_committed_values,
+            expected_merkle_root: None,
         }
+    }
+
+    /// Configure the TRUSTED batch Merkle root used by [`verify_batch`].
+    /// Required: without it, `verify_batch` rejects every batch proof, because
+    /// trusting the proof's own root would let an attacker forge inclusion (C-A).
+    pub fn with_expected_merkle_root(mut self, root: [u8; 32]) -> Self {
+        self.expected_merkle_root = Some(root);
+        self
     }
 
     pub fn with_epoch_tolerance(mut self, tolerance: u64) -> Self {
@@ -114,9 +126,16 @@ impl OnchainVerifier {
             };
         }
 
-        // 2. Verify merkle inclusion
-        if !batch_proof.verify_inclusion() {
-            return VerificationStatus::InvalidMerkleProof;
+        // 2. C-A: verify inclusion against the TRUSTED root, never the proof's
+        // own `merkle_root`. Without a configured trusted root the batch cannot
+        // be soundly verified, so it is rejected.
+        match self.expected_merkle_root {
+            Some(ref trusted_root) => {
+                if !batch_proof.verify_inclusion_against(trusted_root) {
+                    return VerificationStatus::InvalidMerkleProof;
+                }
+            }
+            None => return VerificationStatus::InvalidMerkleProof,
         }
 
         VerificationStatus::Valid

@@ -30,3 +30,7 @@ Cargo.lock
 
 # Fuzzing (entire folder)
 fuzz/
+
+# Throwaway red-team / PoC test files (never commit)
+tests/zzz_*.rs
+tests/*_poc.rs

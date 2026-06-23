@@ -119,21 +119,43 @@ pub struct BatchLightweightProof {
 }
 
 impl BatchLightweightProof {
+    /// Verify Merkle inclusion against a TRUSTED external root (e.g. one held in
+    /// on-chain program state or a signed batch header).
+    ///
+    /// SECURITY (C-A): the trusted root MUST come from a trusted source, NOT
+    /// from the proof itself — otherwise an attacker constructs a self-consistent
+    /// root for any leaf and the check is vacuous. This is the secure entrypoint.
     #[cfg(feature = "alloc")]
     #[allow(clippy::manual_is_multiple_of)]
-    pub fn verify_inclusion(&self) -> bool {
-        use crate::utils::constants::DOMAIN_MERKLE_NODE;
-        use crate::utils::hash::poseidon_hash;
+    pub fn verify_inclusion_against(&self, trusted_root: &[u8; 32]) -> bool {
+        use crate::utils::constants::{DOMAIN_MERKLE_NODE, MAX_MERKLE_DEPTH};
+        use crate::utils::hash::{constant_time_eq_fixed, poseidon_hash};
 
-        // RT-5: bound the path depth so a malformed proof cannot force a long
-        // verification loop (defense-in-depth on top of borsh's bounded prealloc).
-        if self.merkle_path.len() > crate::utils::constants::MAX_MERKLE_DEPTH {
+        // RT-5: bound the path depth (defense-in-depth on top of borsh's bounded
+        // preallocation).
+        if self.merkle_path.len() > MAX_MERKLE_DEPTH {
+            return false;
+        }
+
+        // H-A: the leaf index must lie within the tree and the path depth must
+        // match the tree size, so `leaf_index` is fully consumed by the traversal
+        // (prevents same-parity index forgery / high-bit-ignored replay, and
+        // rejects `leaf_index >= proof_count`).
+        let count = self.proof_count as usize;
+        if count == 0 || (self.leaf_index as usize) >= count {
+            return false;
+        }
+        let expected_depth = if count <= 1 {
+            0
+        } else {
+            (usize::BITS - (count - 1).leading_zeros()) as usize // ceil(log2(count))
+        };
+        if self.merkle_path.len() != expected_depth {
             return false;
         }
 
         let mut current = self.leaf_commitment;
         let mut index = self.leaf_index;
-
         for sibling in &self.merkle_path {
             let combined = if index % 2 == 0 {
                 [current.as_slice(), sibling.as_slice()].concat()
@@ -144,9 +166,20 @@ impl BatchLightweightProof {
             index /= 2;
         }
 
-        // RT-2: bind the leaf count (proof_count) into the root, matching
-        // MerkleTree::new, so trees of different sizes cannot collide.
-        crate::batching::merkle::bind_root(&current, self.proof_count as usize) == self.merkle_root
+        // RT-2: bind the leaf count into the root, matching MerkleTree::new.
+        let computed = crate::batching::merkle::bind_root(&current, count);
+        constant_time_eq_fixed(&computed, trusted_root)
+    }
+
+    /// DANGEROUS: verify against the proof's OWN `merkle_root`. Only sound when
+    /// this proof was built locally from trusted data; an attacker who controls
+    /// the proof controls `merkle_root`, making this check vacuous (C-A). Prefer
+    /// [`verify_inclusion_against`](Self::verify_inclusion_against) with a
+    /// trusted root from on-chain state.
+    #[cfg(feature = "alloc")]
+    pub fn verify_inclusion(&self) -> bool {
+        let root = self.merkle_root;
+        self.verify_inclusion_against(&root)
     }
 
     pub fn estimated_cu(&self) -> u64 {
