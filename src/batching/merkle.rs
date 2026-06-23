@@ -2,7 +2,7 @@
 
 use crate::core::errors::{Result, ZKMTDError};
 use crate::core::types::HashDigest;
-use crate::utils::constants::DOMAIN_MERKLE;
+use crate::utils::constants::{DOMAIN_MERKLE, DOMAIN_MERKLE_NODE};
 use crate::utils::hash::{combine_hashes, poseidon_hash};
 
 #[cfg(feature = "alloc")]
@@ -36,15 +36,15 @@ impl MerkleTree {
             let mut i = 0;
             while i < current_level.len() {
                 if i + 1 < current_level.len() {
-                    // Combine two nodes
+                    // Combine two nodes (internal-node domain, distinct from leaves)
                     let combined =
-                        combine_hashes(&current_level[i], &current_level[i + 1], DOMAIN_MERKLE);
+                        combine_hashes(&current_level[i], &current_level[i + 1], DOMAIN_MERKLE_NODE);
                     next_level.push(combined);
                     i += 2;
                 } else {
                     // For odd count, combine last node with itself
                     let combined =
-                        combine_hashes(&current_level[i], &current_level[i], DOMAIN_MERKLE);
+                        combine_hashes(&current_level[i], &current_level[i], DOMAIN_MERKLE_NODE);
                     next_level.push(combined);
                     i += 1;
                 }
@@ -54,9 +54,12 @@ impl MerkleTree {
             current_level = next_level;
         }
 
-        let root = *current_level.first().ok_or(ZKMTDError::MerkleError {
+        let inner_root = *current_level.first().ok_or(ZKMTDError::MerkleError {
             reason: "Root computation failed".into(),
         })?;
+        // RT-2: bind the leaf count into the root so trees of different sizes
+        // (e.g. [A,B,C] vs [A,B,C,C] via odd-node duplication) cannot collide.
+        let root = bind_root(&inner_root, leaves.len());
 
         Ok(Self {
             leaves,
@@ -108,6 +111,7 @@ impl MerkleTree {
             leaf_index: index,
             siblings,
             root: self.root,
+            num_leaves: self.leaves.len(),
         })
     }
 
@@ -122,6 +126,8 @@ pub struct MerklePath {
     pub leaf_index: usize,
     pub siblings: Vec<HashDigest>,
     pub root: HashDigest,
+    /// Number of leaves in the originating tree; bound into the root (RT-2).
+    pub num_leaves: usize,
 }
 
 #[cfg(feature = "alloc")]
@@ -136,15 +142,16 @@ impl MerklePath {
         for sibling in &self.siblings {
             current_hash = if current_index % 2 == 0 {
                 // Left child
-                combine_hashes(&current_hash, sibling, DOMAIN_MERKLE)
+                combine_hashes(&current_hash, sibling, DOMAIN_MERKLE_NODE)
             } else {
                 // Right child
-                combine_hashes(sibling, &current_hash, DOMAIN_MERKLE)
+                combine_hashes(sibling, &current_hash, DOMAIN_MERKLE_NODE)
             };
             current_index /= 2;
         }
 
-        current_hash
+        // RT-2: bind the leaf count, matching MerkleTree::new.
+        bind_root(&current_hash, self.num_leaves)
     }
 
     /// Verify this path against an externally-provided trusted root.
@@ -180,6 +187,17 @@ impl MerklePath {
 
 pub fn hash_leaf(data: &[u8]) -> HashDigest {
     poseidon_hash(data, DOMAIN_MERKLE)
+}
+
+/// Bind the leaf count into a Merkle root so that trees of different sizes
+/// cannot share a root via the odd-node duplication rule (RT-2). The 8-byte
+/// count makes the input length differ from a plain 64-byte node hash, so a
+/// bound root cannot be confused with an internal node.
+pub(crate) fn bind_root(inner_root: &HashDigest, num_leaves: usize) -> HashDigest {
+    let mut data = [0u8; 40];
+    data[..32].copy_from_slice(inner_root);
+    data[32..].copy_from_slice(&(num_leaves as u64).to_le_bytes());
+    poseidon_hash(&data, DOMAIN_MERKLE_NODE)
 }
 
 #[cfg(test)]
@@ -283,5 +301,18 @@ mod tests {
             let proof = tree.get_proof(i).unwrap();
             assert!(proof.verify(leaf));
         }
+    }
+
+    #[cfg(feature = "alloc")]
+    #[test]
+    fn test_rt2_leaf_count_bound_no_size_collision() {
+        // RT-2: a 3-leaf tree and a 4-leaf tree (last leaf duplicated) must NOT
+        // share a root now that the leaf count is bound into the root.
+        let a = [1u8; 32];
+        let b = [2u8; 32];
+        let c = [3u8; 32];
+        let t3 = MerkleTree::new(vec![a, b, c]).unwrap();
+        let t4 = MerkleTree::new(vec![a, b, c, c]).unwrap();
+        assert_ne!(t3.root(), t4.root(), "tree-size ambiguity must be eliminated");
     }
 }

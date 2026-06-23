@@ -122,8 +122,14 @@ impl BatchLightweightProof {
     #[cfg(feature = "alloc")]
     #[allow(clippy::manual_is_multiple_of)]
     pub fn verify_inclusion(&self) -> bool {
-        use crate::utils::constants::DOMAIN_MERKLE;
+        use crate::utils::constants::DOMAIN_MERKLE_NODE;
         use crate::utils::hash::poseidon_hash;
+
+        // RT-5: bound the path depth so a malformed proof cannot force a long
+        // verification loop (defense-in-depth on top of borsh's bounded prealloc).
+        if self.merkle_path.len() > crate::utils::constants::MAX_MERKLE_DEPTH {
+            return false;
+        }
 
         let mut current = self.leaf_commitment;
         let mut index = self.leaf_index;
@@ -134,11 +140,13 @@ impl BatchLightweightProof {
             } else {
                 [sibling.as_slice(), current.as_slice()].concat()
             };
-            current = poseidon_hash(&combined, DOMAIN_MERKLE);
+            current = poseidon_hash(&combined, DOMAIN_MERKLE_NODE);
             index /= 2;
         }
 
-        current == self.merkle_root
+        // RT-2: bind the leaf count (proof_count) into the root, matching
+        // MerkleTree::new, so trees of different sizes cannot collide.
+        crate::batching::merkle::bind_root(&current, self.proof_count as usize) == self.merkle_root
     }
 
     pub fn estimated_cu(&self) -> u64 {
@@ -267,7 +275,7 @@ mod tests {
 
     #[test]
     fn test_batch_lightweight_proof_verify_inclusion() {
-        use crate::utils::constants::DOMAIN_MERKLE;
+        use crate::utils::constants::DOMAIN_MERKLE_NODE;
         use crate::utils::hash::poseidon_hash;
 
         // Build a simple Merkle tree manually
@@ -275,7 +283,8 @@ mod tests {
         let leaf1 = [2u8; 32];
 
         let combined = [leaf0.as_slice(), leaf1.as_slice()].concat();
-        let root = poseidon_hash(&combined, DOMAIN_MERKLE);
+        let root =
+            crate::batching::merkle::bind_root(&poseidon_hash(&combined, DOMAIN_MERKLE_NODE), 2);
 
         // Create batch proof for leaf0
         let batch_proof = BatchLightweightProof {
@@ -292,14 +301,15 @@ mod tests {
 
     #[test]
     fn test_batch_lightweight_proof_verify_inclusion_right_leaf() {
-        use crate::utils::constants::DOMAIN_MERKLE;
+        use crate::utils::constants::DOMAIN_MERKLE_NODE;
         use crate::utils::hash::poseidon_hash;
 
         let leaf0 = [1u8; 32];
         let leaf1 = [2u8; 32];
 
         let combined = [leaf0.as_slice(), leaf1.as_slice()].concat();
-        let root = poseidon_hash(&combined, DOMAIN_MERKLE);
+        let root =
+            crate::batching::merkle::bind_root(&poseidon_hash(&combined, DOMAIN_MERKLE_NODE), 2);
 
         // Create batch proof for leaf1 (index 1, odd)
         let batch_proof = BatchLightweightProof {

@@ -126,9 +126,13 @@ impl Epoch {
         self.value.to_le_bytes()
     }
 
-    pub fn from_bytes(bytes: [u8; 8]) -> Self {
-        let value = u64::from_le_bytes(bytes);
-        Self::new(value)
+    /// Reconstruct an epoch from its little-endian byte encoding.
+    ///
+    /// Returns an error instead of panicking if the decoded value exceeds
+    /// `MAX_EPOCH` (H-1: this consumes potentially attacker-controlled
+    /// deserialized bytes, so it must be fallible).
+    pub fn from_bytes(bytes: [u8; 8]) -> Result<Self> {
+        Self::try_new(u64::from_le_bytes(bytes))
     }
 }
 
@@ -216,8 +220,16 @@ mod tests {
     fn test_epoch_bytes_conversion() {
         let epoch = Epoch::new(12345);
         let bytes = epoch.to_bytes();
-        let recovered = Epoch::from_bytes(bytes);
+        let recovered = Epoch::from_bytes(bytes).unwrap();
         assert_eq!(epoch, recovered);
+    }
+
+    #[test]
+    fn test_epoch_from_bytes_rejects_overflow() {
+        // H-1: a decoded value > MAX_EPOCH (here u64::MAX) must return Err,
+        // not panic — these bytes can come from untrusted deserialization.
+        let result = Epoch::from_bytes(u64::MAX.to_le_bytes());
+        assert!(result.is_err());
     }
 
     #[test]

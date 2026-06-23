@@ -92,9 +92,8 @@ impl EntropySource for SystemEntropy {
         // - Linux: /dev/urandom
         // - macOS/BSD: arc4random_buf
         // - Windows: BCryptGenRandom
-        use getrandom::getrandom;
-
-        getrandom(output).map_err(|e| ZKMTDError::EntropyError {
+        // getrandom 0.3+: `getrandom()` was renamed to `fill()`
+        getrandom::fill(output).map_err(|e| ZKMTDError::EntropyError {
             reason: alloc::format!("getrandom failed: {}", e),
         })?;
 

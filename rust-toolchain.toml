@@ -1,0 +1,8 @@
+# Plonky3 0.6.x requires a newer Rust than the repo's previous baseline:
+# p3-util 0.6.1 is edition 2024 and uses the now-stable `maybe_uninit_slice`
+# API, which fails to build on Rust 1.92. 1.96.0 is verified to build and pass
+# the full test suite. Pinning here so `cargo build` works out of the box
+# regardless of the machine's default toolchain.
+[toolchain]
+channel = "1.96.0"
+components = ["clippy", "rustfmt"]

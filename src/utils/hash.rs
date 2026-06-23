@@ -9,15 +9,14 @@ use crate::core::types::{FieldElement, HashDigest};
 #[cfg(feature = "alloc")]
 use alloc::vec::Vec;
 
-use p3_field::{AbstractField, PrimeField64};
-use p3_goldilocks::{DiffusionMatrixGoldilocks, Goldilocks};
-use p3_poseidon2::{Poseidon2, Poseidon2ExternalMatrixGeneral};
+use p3_field::{PrimeCharacteristicRing, PrimeField64};
+use p3_goldilocks::{Goldilocks, Poseidon2Goldilocks};
 use p3_symmetric::Permutation;
 
 type F = Goldilocks;
 
 /// Plonky3 Poseidon2 permutation type (width=16, degree=7)
-type Perm = Poseidon2<F, Poseidon2ExternalMatrixGeneral, DiffusionMatrixGoldilocks, 16, 7>;
+type Perm = Poseidon2Goldilocks<16>;
 
 /// Global Poseidon2 instance with deterministic initialization
 /// Uses fixed seed for reproducibility across all executions
@@ -28,29 +27,38 @@ fn get_poseidon2() -> Perm {
 
     let mut rng = ChaCha20Rng::seed_from_u64(ZKMTD_POSEIDON2_SEED);
 
-    Poseidon2::new_from_rng_128(
-        Poseidon2ExternalMatrixGeneral,
-        DiffusionMatrixGoldilocks,
-        &mut rng,
-    )
+    Poseidon2Goldilocks::<16>::new_from_rng_128(&mut rng)
 }
+
+/// Number of input bytes packed into a single Goldilocks field element.
+///
+/// 7 bytes (< 2^56) is always strictly below the field order (2^64 - 2^32 + 1),
+/// so the byte->field encoding is injective: there is no modular wraparound and
+/// therefore no collisions (C-3). Packing a full 8 bytes would require a
+/// reduction mod the field order, which maps distinct 8-byte inputs to the same
+/// element (e.g. `0` and `ORDER_U64` both map to `0`).
+pub const BYTES_PER_FIELD: usize = 7;
 
 pub fn bytes_to_field(bytes: &[u8]) -> FieldElement {
     let mut result = 0u64;
-    for (i, &byte) in bytes.iter().take(8).enumerate() {
+    for (i, &byte) in bytes.iter().take(BYTES_PER_FIELD).enumerate() {
         result |= (byte as u64) << (i * 8);
     }
-    // Goldilocks field modulo operation
-    result % F::ORDER_U64
+    // result < 2^56 < F::ORDER_U64, so it is already canonical (no reduction,
+    // hence injective and collision-free).
+    result
 }
 
-pub fn field_to_bytes(field_elem: FieldElement) -> [u8; 8] {
-    field_elem.to_le_bytes()
+pub fn field_to_bytes(field_elem: FieldElement) -> [u8; BYTES_PER_FIELD] {
+    let le = field_elem.to_le_bytes();
+    let mut out = [0u8; BYTES_PER_FIELD];
+    out.copy_from_slice(&le[..BYTES_PER_FIELD]);
+    out
 }
 
 #[cfg(feature = "alloc")]
 pub fn bytes_to_fields(bytes: &[u8]) -> Vec<FieldElement> {
-    bytes.chunks(8).map(bytes_to_field).collect()
+    bytes.chunks(BYTES_PER_FIELD).map(bytes_to_field).collect()
 }
 
 /// Poseidon2-based cryptographic hash function
@@ -65,28 +73,35 @@ pub fn poseidon_hash(data: &[u8], domain: &[u8]) -> HashDigest {
     const RATE: usize = 8;
 
     let perm = get_poseidon2();
-    let mut state = [F::zero(); WIDTH];
+    let mut state = [F::ZERO; WIDTH];
 
-    // 1. Domain separation: absorb domain into state
-    for (i, chunk) in domain.chunks(8).enumerate() {
+    // 1. Domain separation: absorb domain into the rate region, then permute.
+    //    Bytes are packed BYTES_PER_FIELD (=7) at a time so the encoding is
+    //    injective (no field-order wraparound collisions, C-3).
+    for (i, chunk) in domain.chunks(BYTES_PER_FIELD).enumerate() {
         if i >= RATE {
             break;
         }
-        let val = bytes_to_field(chunk);
-        state[i] = F::from_canonical_u64(val);
+        state[i] = F::from_u64(bytes_to_field(chunk));
     }
 
     // First permutation (domain separation)
     perm.permute_mut(&mut state);
 
-    // 2. Data absorption: convert to field elements and absorb
-    for chunk in data.chunks(8 * RATE) {
-        for (i, bytes_chunk) in chunk.chunks(8).enumerate() {
+    // 2. Length encoding (C-4): absorb the message length before the data so
+    //    that trailing zero bytes and partial final blocks cannot collide
+    //    (length-extension-style collisions) in this padding-free sponge.
+    state[0] += F::from_u64(data.len() as u64);
+    perm.permute_mut(&mut state);
+
+    // 3. Data absorption: BYTES_PER_FIELD bytes per rate lane, RATE lanes per
+    //    permutation.
+    for chunk in data.chunks(BYTES_PER_FIELD * RATE) {
+        for (i, bytes_chunk) in chunk.chunks(BYTES_PER_FIELD).enumerate() {
             if i >= RATE {
                 break;
             }
-            let val = bytes_to_field(bytes_chunk);
-            state[i] += F::from_canonical_u64(val);
+            state[i] += F::from_u64(bytes_to_field(bytes_chunk));
         }
         perm.permute_mut(&mut state);
     }
@@ -109,8 +124,17 @@ fn permute(state: &mut [Goldilocks; 16], _rounds: usize) {
     perm.permute_mut(state);
 }
 
+/// Derive a single field element from a full hash digest.
+///
+/// Folds every `BYTES_PER_FIELD`-byte limb of the digest in the Goldilocks
+/// field so all 32 bytes of entropy contribute (rather than truncating to a
+/// single limb).
 pub fn hash_to_field(hash: &HashDigest) -> FieldElement {
-    bytes_to_field(hash)
+    let mut acc = F::ZERO;
+    for chunk in hash.chunks(BYTES_PER_FIELD) {
+        acc += F::from_u64(bytes_to_field(chunk));
+    }
+    acc.as_canonical_u64()
 }
 
 pub fn combine_hashes(left: &HashDigest, right: &HashDigest, domain: &[u8]) -> HashDigest {
@@ -225,10 +249,37 @@ mod tests {
 
     #[test]
     fn test_bytes_to_field_conversion() {
-        let bytes = [1, 2, 3, 4, 5, 6, 7, 8];
+        // BYTES_PER_FIELD (=7) bytes round-trip exactly through the injective
+        // byte<->field encoding.
+        let bytes = [1, 2, 3, 4, 5, 6, 7];
         let field = bytes_to_field(&bytes);
         let back = field_to_bytes(field);
         assert_eq!(bytes, back);
+    }
+
+    #[test]
+    fn test_bytes_to_field_no_wraparound_collision() {
+        // C-3 regression: before the injective 7-byte packing, these two
+        // distinct 8-byte inputs both reduced to the field element 0 — the
+        // second is ORDER_U64 (2^64 - 2^32 + 1) in little-endian, which wrapped
+        // to 0 under the old `% ORDER` reduction. They must now differ.
+        let zero = [0u8; 8];
+        let order_le = F::ORDER_U64.to_le_bytes();
+        assert_ne!(
+            bytes_to_field(&zero),
+            bytes_to_field(&order_le),
+            "byte->field encoding must be collision-free"
+        );
+    }
+
+    #[test]
+    fn test_hash_length_encoding_resists_trailing_zeros() {
+        // C-4 regression: messages differing only by a trailing zero byte pack
+        // into identical field lanes. The absorbed length must disambiguate
+        // them, otherwise the padding-free sponge admits trivial collisions.
+        let a = poseidon_hash(b"abc", b"dom");
+        let b = poseidon_hash(b"abc\x00", b"dom");
+        assert_ne!(a, b, "trailing-zero messages must hash differently");
     }
 
     #[test]
@@ -357,11 +408,11 @@ mod tests {
 
     #[test]
     fn test_permutation_changes_state() {
-        let mut state1 = [F::zero(); 16];
-        let mut state2 = [F::zero(); 16];
+        let mut state1 = [F::ZERO; 16];
+        let mut state2 = [F::ZERO; 16];
 
-        state1[0] = F::one();
-        state2[0] = F::one();
+        state1[0] = F::ONE;
+        state2[0] = F::ONE;
 
         permute(&mut state1, 8);
 
@@ -565,8 +616,8 @@ mod tests {
     fn test_sbox_nonlinearity() {
         // x^7 S-box should be highly nonlinear
         // Test that linear combinations don't hold
-        let a = F::from_canonical_u64(12345);
-        let b = F::from_canonical_u64(67890);
+        let a = F::from_u64(12345);
+        let b = F::from_u64(67890);
 
         // S(a) + S(b) should not equal S(a + b)
         let sa = sbox(a);
@@ -576,7 +627,7 @@ mod tests {
         assert_ne!(sa + sb, sab, "S-box appears linear!");
 
         // S(k*a) should not equal k*S(a) for k != 0,1
-        let k = F::from_canonical_u64(3);
+        let k = F::from_u64(3);
         let ska = sbox(k * a);
         let ksa = k * sa;
         assert_ne!(ska, ksa, "S-box appears homomorphic!");
@@ -617,8 +668,8 @@ mod tests {
     fn test_permutation_invertibility_not_exploitable() {
         // While permutation is theoretically invertible,
         // the sponge construction should prevent exploitation
-        let mut state1 = [F::zero(); 16];
-        state1[0] = F::from_canonical_u64(0x123456789ABCDEF0);
+        let mut state1 = [F::ZERO; 16];
+        state1[0] = F::from_u64(0x123456789ABCDEF0);
 
         let original = state1;
 
@@ -641,17 +692,17 @@ mod tests {
         // Test that our constants prevent this
 
         // All-zero input
-        let mut state = [F::zero(); 16];
+        let mut state = [F::ZERO; 16];
         permute(&mut state, 8);
 
-        let zero_count = state.iter().filter(|&&x| x == F::zero()).count();
+        let zero_count = state.iter().filter(|&&x| x == F::ZERO).count();
         assert!(zero_count == 0, "Permutation has zero fixed points");
 
         // All-one input
-        let mut state = [F::one(); 16];
+        let mut state = [F::ONE; 16];
         permute(&mut state, 8);
 
-        let one_count = state.iter().filter(|&&x| x == F::one()).count();
+        let one_count = state.iter().filter(|&&x| x == F::ONE).count();
         assert!(one_count == 0, "Permutation has one fixed points");
     }
 
@@ -696,19 +747,14 @@ mod tests {
         // Verify our implementation follows Poseidon2 structure
         // Even if constants differ, the structure should be sound
 
-        use p3_poseidon2::{Poseidon2, Poseidon2ExternalMatrixGeneral};
-        use p3_goldilocks::DiffusionMatrixGoldilocks;
+        use p3_goldilocks::Poseidon2Goldilocks;
         use rand::SeedableRng;
         use rand_chacha::ChaCha20Rng;
 
         // Create real Plonky3 Poseidon2 (verify it initializes without error)
         let mut rng = ChaCha20Rng::seed_from_u64(0);
-        let _real_poseidon: Poseidon2<Goldilocks, Poseidon2ExternalMatrixGeneral, DiffusionMatrixGoldilocks, 16, 7> =
-            Poseidon2::new_from_rng_128(
-                Poseidon2ExternalMatrixGeneral,
-                DiffusionMatrixGoldilocks,
-                &mut rng,
-            );
+        let _real_poseidon: Poseidon2Goldilocks<16> =
+            Poseidon2Goldilocks::<16>::new_from_rng_128(&mut rng);
 
         // Both should:
         // 1. Use Goldilocks field
@@ -716,9 +762,9 @@ mod tests {
         // 3. Have width 16
 
         // Test that our permutation produces valid field elements
-        let mut state = [F::zero(); 16];
+        let mut state = [F::ZERO; 16];
         for (i, elem) in state.iter_mut().enumerate() {
-            *elem = F::from_canonical_u64(i as u64 * 12345);
+            *elem = F::from_u64(i as u64 * 12345);
         }
 
         permute(&mut state, 8);

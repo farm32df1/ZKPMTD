@@ -7,10 +7,9 @@ use alloc::vec::Vec;
 
 // Plonky3 imports
 use p3_air::Air as P3Air;
-use p3_air::{AirBuilder, BaseAir};
-use p3_field::AbstractField;
+use p3_air::{AirBuilder, BaseAir, WindowAccess};
 use p3_goldilocks::Goldilocks;
-use p3_matrix::{dense::RowMajorMatrix, Matrix};
+use p3_matrix::dense::RowMajorMatrix;
 
 /// Simple AIR for Fibonacci, Sum, Multiplication
 #[derive(Debug, Clone)]
@@ -87,26 +86,80 @@ impl BaseAir<Goldilocks> for SimpleAir {
     fn width(&self) -> usize {
         self.num_columns
     }
+
+    fn num_public_values(&self) -> usize {
+        match self.air_type {
+            // [init_a, init_b, final_a, final_b]
+            AirType::Fibonacci => 4,
+            // [a_first, b_first, c_first, a_last, b_last, c_last]
+            AirType::Sum | AirType::Multiplication => 6,
+        }
+    }
 }
 
 impl<AB: AirBuilder<F = Goldilocks>> P3Air<AB> for SimpleAir {
     fn eval(&self, builder: &mut AB) {
         let main = builder.main();
-        let local = main.row_slice(0);
-        let next = main.row_slice(1);
+        let local = main.current_slice();
+        let next = main.next_slice();
 
         match self.air_type {
             AirType::Fibonacci => {
-                builder.when_first_row().assert_eq(local[0], AB::Expr::zero());
-                builder.when_first_row().assert_eq(local[1], AB::Expr::one());
-                builder.when_transition().assert_eq(next[0], local[1]);
-                builder.when_transition().assert_eq(next[1], local[0] + local[1]);
+                // SOUNDNESS (C-1): bind the trace boundary rows to the public values
+                // [init_a, init_b, final_a, final_b] so the proof actually attests to
+                // the claimed initial/final values instead of leaving them free.
+                let pis = builder.public_values();
+                let (init_a, init_b, final_a, final_b) = (pis[0], pis[1], pis[2], pis[3]);
+
+                let mut when_first = builder.when_first_row();
+                when_first.assert_eq(local[0], init_a);
+                when_first.assert_eq(local[1], init_b);
+
+                let mut when_trans = builder.when_transition();
+                when_trans.assert_eq(next[0], local[1]);
+                when_trans.assert_eq(next[1], local[0] + local[1]);
+
+                let mut when_last = builder.when_last_row();
+                when_last.assert_eq(local[0], final_a);
+                when_last.assert_eq(local[1], final_b);
             }
             AirType::Sum => {
+                // Per-row relation: c = a + b
                 builder.assert_eq(local[2], local[0] + local[1]);
+
+                // SOUNDNESS (C-1): bind first/last trace rows to the public values
+                // [a_first, b_first, c_first, a_last, b_last, c_last].
+                let pis = builder.public_values();
+                let (af, bf, cf, al, bl, cl) = (pis[0], pis[1], pis[2], pis[3], pis[4], pis[5]);
+
+                let mut when_first = builder.when_first_row();
+                when_first.assert_eq(local[0], af);
+                when_first.assert_eq(local[1], bf);
+                when_first.assert_eq(local[2], cf);
+
+                let mut when_last = builder.when_last_row();
+                when_last.assert_eq(local[0], al);
+                when_last.assert_eq(local[1], bl);
+                when_last.assert_eq(local[2], cl);
             }
             AirType::Multiplication => {
+                // Per-row relation: c = a * b
                 builder.assert_eq(local[2], local[0] * local[1]);
+
+                // SOUNDNESS (C-1): bind first/last trace rows to the public values
+                // [a_first, b_first, c_first, a_last, b_last, c_last].
+                let pis = builder.public_values();
+                let (af, bf, cf, al, bl, cl) = (pis[0], pis[1], pis[2], pis[3], pis[4], pis[5]);
+
+                let mut when_first = builder.when_first_row();
+                when_first.assert_eq(local[0], af);
+                when_first.assert_eq(local[1], bf);
+                when_first.assert_eq(local[2], cf);
+
+                let mut when_last = builder.when_last_row();
+                when_last.assert_eq(local[0], al);
+                when_last.assert_eq(local[1], bl);
+                when_last.assert_eq(local[2], cl);
             }
         }
     }
@@ -146,7 +199,7 @@ pub mod trace_builder {
     }
 
     pub fn build_fibonacci_trace_p3(num_rows: usize) -> Result<RowMajorMatrix<Goldilocks>> {
-        use p3_field::AbstractField;
+        use p3_field::PrimeCharacteristicRing;
 
         if !num_rows.is_power_of_two() {
             return Err(ZKMTDError::InvalidWitness {
@@ -155,8 +208,8 @@ pub mod trace_builder {
         }
 
         let mut values = Vec::with_capacity(num_rows * 2);
-        let mut a = Goldilocks::zero();
-        let mut b = Goldilocks::one();
+        let mut a = Goldilocks::ZERO;
+        let mut b = Goldilocks::ONE;
 
         for _ in 0..num_rows {
             values.push(a);
@@ -221,6 +274,7 @@ pub mod trace_builder {
 mod tests {
     use super::*;
     use alloc::vec;
+    use p3_matrix::Matrix;
     use trace_builder::*;
 
     #[test]

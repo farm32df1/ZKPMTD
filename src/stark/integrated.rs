@@ -49,7 +49,9 @@ pub struct IntegratedProver {
 impl IntegratedProver {
     pub fn new(seed: &[u8], epoch: Epoch) -> Result<Self> {
         let mtd_manager = MTDManager::with_epoch(seed, epoch)?;
-        let stark_prover = RealStarkProver::new(SimpleAir::fibonacci())?;
+        let mut stark_prover = RealStarkProver::new(SimpleAir::fibonacci())?;
+        // H-3: bind this epoch's MTD seed into the STARK Fiat-Shamir transcript.
+        stark_prover.set_mtd_seed(mtd_manager.current_params().fri_seed);
         Ok(Self {
             mtd_manager,
             stark_prover,
@@ -61,7 +63,9 @@ impl IntegratedProver {
         entropy: &mut E,
     ) -> Result<Self> {
         let mtd_manager = MTDManager::new(seed, entropy)?;
-        let stark_prover = RealStarkProver::new(SimpleAir::fibonacci())?;
+        let mut stark_prover = RealStarkProver::new(SimpleAir::fibonacci())?;
+        // H-3: bind this epoch's MTD seed into the STARK Fiat-Shamir transcript.
+        stark_prover.set_mtd_seed(mtd_manager.current_params().fri_seed);
         Ok(Self {
             mtd_manager,
             stark_prover,
@@ -76,6 +80,9 @@ impl IntegratedProver {
     }
     pub fn advance_epoch(&mut self) -> Result<()> {
         self.mtd_manager.advance()?;
+        // H-3: re-bind the new epoch's MTD seed into the STARK transcript.
+        self.stark_prover
+            .set_mtd_seed(self.mtd_manager.current_params().fri_seed);
         Ok(())
     }
 
@@ -199,7 +206,9 @@ pub struct IntegratedVerifier {
 impl IntegratedVerifier {
     pub fn new(seed: &[u8], epoch: Epoch) -> Result<Self> {
         let mtd_manager = MTDManager::with_epoch(seed, epoch)?;
-        let stark_verifier = RealStarkVerifier::new(SimpleAir::fibonacci())?;
+        let mut stark_verifier = RealStarkVerifier::new(SimpleAir::fibonacci())?;
+        // H-3: bind this epoch's MTD seed so verification matches the prover.
+        stark_verifier.set_mtd_seed(mtd_manager.current_params().fri_seed);
         Ok(Self {
             stark_verifier,
             current_epoch: mtd_manager.current_epoch(),

@@ -1,4 +1,20 @@
-//! Range Proof AIR - proves value >= threshold without revealing value
+//! Range Proof AIR - proves `value >= threshold` without revealing `value`.
+//!
+//! ## SECURITY LIMITATION (RT-1)
+//! The `value` column is a *private free witness* and is NOT bound to any
+//! external commitment. The circuit proves only the existential statement
+//! "∃ value with `value - threshold ∈ [0, 2^32)`", which is trivially
+//! satisfiable by choosing `value == threshold`. On its own this proof does
+//! NOT attest that a caller's *specific* value meets the threshold — a prover
+//! can "prove `x >= threshold`" for any threshold without holding any real
+//! quantity.
+//!
+//! To make this a meaningful range proof, `value` must be bound to a
+//! commitment the verifier trusts — e.g. asserting `commit(value, salt) ==
+//! public_value_commitment` in-circuit (requires a Poseidon2 hash gadget, not
+//! yet implemented). Until then, treat this AIR as a building block, not a
+//! standalone "I hold a value ≥ threshold" attestation. (C-1 binds `threshold`
+//! to the public input; only `value` remains unbound.)
 
 use crate::core::errors::{Result, ZKMTDError};
 
@@ -6,11 +22,10 @@ use crate::core::errors::{Result, ZKMTDError};
 use alloc::vec::Vec;
 
 use p3_air::Air as P3Air;
-use p3_air::{AirBuilder, BaseAir};
-use p3_field::AbstractField;
+use p3_air::{AirBuilder, BaseAir, WindowAccess};
+use p3_field::PrimeCharacteristicRing;
 use p3_goldilocks::Goldilocks;
 use p3_matrix::dense::RowMajorMatrix;
-use p3_matrix::Matrix;
 
 pub const RANGE_BITS: usize = 32;
 
@@ -52,12 +67,17 @@ impl BaseAir<Goldilocks> for RangeAir {
     fn width(&self) -> usize {
         self.num_bits + 3
     }
+
+    fn num_public_values(&self) -> usize {
+        // [threshold]
+        1
+    }
 }
 
 impl<AB: AirBuilder<F = Goldilocks>> P3Air<AB> for RangeAir {
     fn eval(&self, builder: &mut AB) {
         let main = builder.main();
-        let local = main.row_slice(0);
+        let local = main.current_slice();
 
         // Column indices
         let bits_end = self.num_bits;
@@ -67,9 +87,8 @@ impl<AB: AirBuilder<F = Goldilocks>> P3Air<AB> for RangeAir {
 
         // 1. Verify each bit is binary (0 or 1)
         // Constraint: bit * (1 - bit) = 0
-        for i in 0..self.num_bits {
-            let bit = local[i];
-            builder.assert_zero(bit * (AB::Expr::one() - bit));
+        for &bit in local.iter().take(self.num_bits) {
+            builder.assert_zero(bit * (AB::Expr::ONE - bit));
         }
 
         // 2. Verify diff = value - threshold
@@ -78,13 +97,19 @@ impl<AB: AirBuilder<F = Goldilocks>> P3Air<AB> for RangeAir {
         let diff = local[diff_idx];
         builder.assert_eq(diff, value - threshold);
 
-        // 3. Verify bit decomposition: sum(bit_i * 2^i) = diff
-        let mut reconstructed = AB::Expr::zero();
-        let mut power_of_two = AB::Expr::one();
+        // SOUNDNESS (C-1): bind the in-trace threshold column to the public
+        // threshold input, so the proof attests "value >= <public threshold>"
+        // against the verifier's threshold rather than a prover-chosen one.
+        let public_threshold = builder.public_values()[0];
+        builder.assert_eq(threshold, public_threshold);
 
-        for i in 0..self.num_bits {
-            reconstructed += local[i] * power_of_two.clone();
-            power_of_two *= AB::Expr::from_canonical_u64(2);
+        // 3. Verify bit decomposition: sum(bit_i * 2^i) = diff
+        let mut reconstructed = AB::Expr::ZERO;
+        let mut power_of_two = AB::Expr::ONE;
+
+        for &bit in local.iter().take(self.num_bits) {
+            reconstructed += bit * power_of_two.clone();
+            power_of_two *= AB::Expr::from_u64(2);
         }
 
         builder.assert_eq(reconstructed, diff);
@@ -149,7 +174,7 @@ pub mod trace_builder {
         let mut bits = Vec::with_capacity(RANGE_BITS);
         let mut remaining = diff;
         for _ in 0..RANGE_BITS {
-            bits.push(Goldilocks::from_canonical_u64(remaining & 1));
+            bits.push(Goldilocks::from_u64(remaining & 1));
             remaining >>= 1;
         }
 
@@ -158,9 +183,9 @@ pub mod trace_builder {
 
         // Build trace row: [bits..., value, threshold, diff]
         let mut row = bits;
-        row.push(Goldilocks::from_canonical_u64(value));
-        row.push(Goldilocks::from_canonical_u64(threshold));
-        row.push(Goldilocks::from_canonical_u64(diff));
+        row.push(Goldilocks::from_u64(value));
+        row.push(Goldilocks::from_u64(threshold));
+        row.push(Goldilocks::from_u64(diff));
 
         // For STARK, we need power-of-two rows, so duplicate the row
         let width = RANGE_BITS + 3;
@@ -186,6 +211,13 @@ pub mod trace_builder {
     }
 }
 
+/// Intended public inputs for a sound range proof.
+///
+/// NOTE (RT-1): `value_commitment` is the *intended* binding of the private
+/// `value` to an external commitment, but the AIR does NOT yet enforce
+/// `commit(value, salt) == value_commitment` in-circuit. Until that gadget
+/// exists this field is informational and `value` stays unbound — see the
+/// module-level SECURITY LIMITATION note.
 #[derive(Debug, Clone)]
 pub struct RangeProofPublicInputs {
     pub threshold: u64,
@@ -279,7 +311,7 @@ mod tests {
         let trace = build_range_proof_trace(25, 18).unwrap();
 
         // Check bits of diff=7: [1, 1, 1, 0, 0, ...]
-        let row: Vec<Goldilocks> = trace.row(0).collect();
+        let row: Vec<Goldilocks> = trace.row(0).unwrap().into_iter().collect();
         assert_eq!(row[0].as_canonical_u64(), 1); // bit 0
         assert_eq!(row[1].as_canonical_u64(), 1); // bit 1
         assert_eq!(row[2].as_canonical_u64(), 1); // bit 2

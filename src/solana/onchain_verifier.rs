@@ -67,6 +67,12 @@ impl OnchainVerifier {
 
     #[cfg(feature = "alloc")]
     pub fn verify(&self, proof: &LightweightProof) -> VerificationStatus {
+        // 0. RT-5: reject absurd public-value counts (defense-in-depth; borsh
+        // already bounds deserialization preallocation).
+        if proof.public_values.len() > crate::utils::constants::MAX_PUBLIC_INPUTS_SIZE {
+            return VerificationStatus::InvalidPublicValues;
+        }
+
         // 1. Verify epoch
         if !self.is_valid_epoch(proof.epoch) {
             return VerificationStatus::InvalidEpoch {

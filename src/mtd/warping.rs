@@ -133,7 +133,7 @@ impl WarpingParams {
 
         let mut epoch_bytes = [0u8; 8];
         epoch_bytes.copy_from_slice(&bytes[0..8]);
-        let epoch = Epoch::from_bytes(epoch_bytes);
+        let epoch = Epoch::from_bytes(epoch_bytes)?;
 
         let mut domain_separator = [0u8; 32];
         domain_separator.copy_from_slice(&bytes[8..40]);

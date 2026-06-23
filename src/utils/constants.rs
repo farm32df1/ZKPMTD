@@ -5,11 +5,23 @@ pub const MIN_PROOF_SIZE: usize = 1024;
 pub const MAX_PROOF_SIZE: usize = 1024 * 1024;
 pub const MIN_WITNESS_SIZE: usize = 4;
 pub const MAX_WITNESS_SIZE: usize = 1024 * 1024;
+
+/// Maximum STARK trace height (rows) accepted by prover/verifier.
+/// Bounds attacker-controlled `num_rows` so the verifier cannot be forced into
+/// unbounded O(num_rows) work (RT-3 DoS). Realistic proofs are far smaller
+/// (≤ 2^16); 2^20 is a generous ceiling.
+pub const MAX_TRACE_ROWS: usize = 1 << 20;
 /// Maximum allowed size for RLE decompression output to prevent memory exhaustion DoS attacks.
 /// Set to 10MB to accommodate large proofs while preventing abuse.
 pub const MAX_RLE_DECOMPRESSED_SIZE: usize = 10 * 1024 * 1024;
 pub const MIN_PUBLIC_INPUTS_SIZE: usize = 1;
 pub const MAX_PUBLIC_INPUTS_SIZE: usize = 256;
+
+/// Maximum Merkle inclusion-path depth accepted by the on-chain verifier.
+/// Bounds the verify loop against a malformed proof carrying an over-long path
+/// (RT-5 defense-in-depth; borsh already caps deserialization preallocation).
+/// Depth 64 corresponds to 2^64 leaves — far beyond any real batch.
+pub const MAX_MERKLE_DEPTH: usize = 64;
 pub const EPOCH_DURATION_SECS: u64 = 3600;
 pub const MAX_EPOCH: u64 = u64::MAX - 1;
 pub const SYSTEM_SALT: &[u8] = b"ZKMTD-v1-system-salt-2024";
@@ -20,6 +32,10 @@ pub const DOMAIN_PROOF_VERIFICATION: &[u8] = b"ZKMTD::ProofVerification";
 pub const DOMAIN_MTD_PARAMS: &[u8] = b"ZKMTD::MTD::Parameters";
 pub const DOMAIN_ENTROPY: &[u8] = b"ZKMTD::Entropy";
 pub const DOMAIN_MERKLE: &[u8] = b"ZKMTD::Merkle";
+/// Internal Merkle node domain. MUST differ from `DOMAIN_MERKLE` (the leaf
+/// domain) to prevent leaf/internal-node second-preimage confusion (C-4):
+/// an internal node hash can never collide with a leaf-level hash.
+pub const DOMAIN_MERKLE_NODE: &[u8] = b"ZKMTD::Merkle::Node";
 pub const DOMAIN_COMMITMENT: &[u8] = b"ZKMTD::Commitment";
 
 // Committed public inputs
@@ -102,6 +118,7 @@ mod tests {
             DOMAIN_MTD_PARAMS,
             DOMAIN_ENTROPY,
             DOMAIN_MERKLE,
+            DOMAIN_MERKLE_NODE,
             DOMAIN_COMMITMENT,
             DOMAIN_PV_COMMIT,
             DOMAIN_PV_SALT,
