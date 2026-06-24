@@ -41,7 +41,10 @@ impl Epoch {
     }
 
     pub fn from_timestamp(timestamp_secs: u64) -> Self {
-        let value = timestamp_secs / EPOCH_DURATION_SECS;
+        // L-A: enforce the MAX_EPOCH invariant for hygiene. For any u64 timestamp
+        // `ts / EPOCH_DURATION_SECS` is already far below MAX_EPOCH, so this clamp
+        // is a no-op in practice but guarantees the invariant unconditionally.
+        let value = (timestamp_secs / EPOCH_DURATION_SECS).min(MAX_EPOCH);
         Self { value }
     }
 

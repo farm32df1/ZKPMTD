@@ -6,7 +6,7 @@
 use zkmtd::batching::MerkleTree;
 use zkmtd::stark::air::SimpleAir;
 use zkmtd::stark::{ProofAirType, RealStarkProver, RealStarkVerifier};
-use zkmtd::utils::hash::{bytes_to_field, poseidon_hash};
+use zkmtd::utils::hash::{bytes_to_field, hash_to_field, poseidon_hash};
 use zkmtd::Epoch;
 
 const MAX_RANGE_VALUE: u64 = 1u64 << 32;
@@ -168,4 +168,91 @@ fn atk_determinism() {
     assert_eq!(a.public_values, b.public_values, "public values nondeterministic");
     assert!(v.verify_sum(&a).unwrap() && v.verify_sum(&b).unwrap());
     assert_eq!(poseidon_hash(b"x", b"y"), poseidon_hash(b"x", b"y"), "hash nondeterministic");
+}
+
+// ---- C-A: on-chain batch verification requires a TRUSTED external root ----
+
+#[cfg(feature = "solana-adapter")]
+#[test]
+fn atk_ca_onchain_batch_requires_trusted_root() {
+    use zkmtd::solana::onchain_verifier::VerificationStatus;
+    use zkmtd::solana::{BatchLightweightProof, OnchainVerifier};
+
+    let leaves = vec![[1u8; 32], [2u8; 32], [3u8; 32], [4u8; 32]];
+    let tree = MerkleTree::new(leaves.clone()).unwrap();
+    let path = tree.get_proof(0).unwrap();
+    let trusted_root = *tree.root();
+
+    let proof = BatchLightweightProof {
+        merkle_root: trusted_root,
+        proof_count: 4,
+        epoch: 100,
+        merkle_path: path.siblings.clone(),
+        leaf_index: 0,
+        leaf_commitment: leaves[0],
+    };
+
+    // Legit proof against the correct TRUSTED root -> Valid.
+    let v_ok = OnchainVerifier::new(100, [0u8; 32]).with_expected_merkle_root(trusted_root);
+    assert_eq!(v_ok.verify_batch(&proof), VerificationStatus::Valid);
+
+    // C-A: no trusted root configured -> rejected (must not trust the proof's own root).
+    let v_none = OnchainVerifier::new(100, [0u8; 32]);
+    assert_ne!(v_none.verify_batch(&proof), VerificationStatus::Valid, "self-rooted batch accepted");
+
+    // Forged leaf (never in the tree) -> rejected against the trusted root.
+    let mut forged = proof.clone();
+    forged.leaf_commitment = [0x41u8; 32];
+    assert_ne!(v_ok.verify_batch(&forged), VerificationStatus::Valid, "forged leaf accepted");
+}
+
+// ---- H-A: leaf index must be bound (within tree, full-depth path) ----
+
+#[cfg(feature = "solana-adapter")]
+#[test]
+fn atk_ha_leaf_index_bound() {
+    use zkmtd::solana::BatchLightweightProof;
+
+    let leaves = vec![[1u8; 32], [2u8; 32], [3u8; 32], [4u8; 32]];
+    let tree = MerkleTree::new(leaves.clone()).unwrap();
+    let path = tree.get_proof(0).unwrap();
+    let trusted = *tree.root();
+
+    let mk = |idx: u32| BatchLightweightProof {
+        merkle_root: trusted,
+        proof_count: 4,
+        epoch: 1,
+        merkle_path: path.siblings.clone(),
+        leaf_index: idx,
+        leaf_commitment: leaves[0],
+    };
+
+    assert!(mk(0).verify_inclusion_against(&trusted), "legit index-0 proof rejected");
+    assert!(!mk(4).verify_inclusion_against(&trusted), "leaf_index >= proof_count accepted");
+    assert!(!mk(0x7FFF_FFFE).verify_inclusion_against(&trusted), "out-of-range leaf_index accepted");
+}
+
+// ---- H-B: hash_to_field must not be linearly collidable ----
+
+#[test]
+fn atk_hb_hash_to_field_no_linear_collision() {
+    let mut a = [0u8; 32];
+    a[0] = 1;
+    let mut b = [0u8; 32];
+    b[7] = 1; // same limb-sum as `a` under the old (buggy) additive folding
+    assert_ne!(hash_to_field(&a), hash_to_field(&b), "hash_to_field linear collision");
+}
+
+// ---- M-A: poseidon_hash must absorb the FULL domain ----
+
+#[test]
+fn atk_ma_long_domain_no_prefix_collision() {
+    let d1 = vec![0xAAu8; 100];
+    let mut d2 = vec![0xAAu8; 100];
+    d2[80] = 0xBB; // differ only past byte 56 (old code truncated the domain there)
+    assert_ne!(
+        poseidon_hash(b"data", &d1),
+        poseidon_hash(b"data", &d2),
+        "long-domain prefix collision"
+    );
 }

@@ -27,6 +27,8 @@ p3-challenger = { version = "0.6.1", default-features = false, optional = true }
 p3-fri = { version = "0.6.1", default-features = false, optional = true }
 p3-merkle-tree = { version = "0.6.1", default-features = false, optional = true }
 p3-dft = { version = "0.6.1", default-features = false, optional = true }
+# In-circuit Poseidon2 constraints (RT-1: bind range `value` to a commitment)
+p3-poseidon2-air = { version = "0.6.1", default-features = false, optional = true }
 
 # Hash functions - ZK-Friendly
 p3-poseidon2 = { version = "0.6.1", default-features = false }
@@ -69,7 +71,7 @@ default = ["alloc", "full-p3"]
 alloc = []
 
 # Full Plonky3 features (std recommended due to tracing)
-full-p3 = ["p3-commit", "p3-uni-stark", "p3-challenger", "p3-fri", "p3-merkle-tree", "p3-dft"]
+full-p3 = ["p3-commit", "p3-uni-stark", "p3-challenger", "p3-fri", "p3-merkle-tree", "p3-dft", "p3-poseidon2-air"]
 
 # Standard library support
 std = ["alloc", "full-p3", "serde/std", "getrandom"]

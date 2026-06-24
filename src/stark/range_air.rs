@@ -9,12 +9,12 @@
 //! can "prove `x >= threshold`" for any threshold without holding any real
 //! quantity.
 //!
-//! To make this a meaningful range proof, `value` must be bound to a
-//! commitment the verifier trusts — e.g. asserting `commit(value, salt) ==
-//! public_value_commitment` in-circuit (requires a Poseidon2 hash gadget, not
-//! yet implemented). Until then, treat this AIR as a building block, not a
-//! standalone "I hold a value ≥ threshold" attestation. (C-1 binds `threshold`
-//! to the public input; only `value` remains unbound.)
+//! For a SOUND, binding range proof use [`crate::stark::range_commit_air::RangeCommitAir`]
+//! instead: it computes `commit = Poseidon2([value, salt, ..])` IN-CIRCUIT and
+//! binds it to a public `value_commitment`, so the proof attests that the value
+//! inside a specific public commitment is `>= threshold` (RT-1 fixed). This bare
+//! `RangeAir` is the lighter building block where `value` is unbound (C-1 binds
+//! only `threshold`).
 
 use crate::core::errors::{Result, ZKMTDError};
 

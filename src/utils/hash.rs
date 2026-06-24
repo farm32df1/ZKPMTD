@@ -18,16 +18,30 @@ type F = Goldilocks;
 /// Plonky3 Poseidon2 permutation type (width=16, degree=7)
 type Perm = Poseidon2Goldilocks<16>;
 
-/// Global Poseidon2 instance with deterministic initialization
-/// Uses fixed seed for reproducibility across all executions
-fn get_poseidon2() -> Perm {
+/// Build the deterministic Poseidon2 permutation from the fixed seed.
+fn build_poseidon2() -> Perm {
     use crate::utils::constants::ZKMTD_POSEIDON2_SEED;
     use rand::SeedableRng;
     use rand_chacha::ChaCha20Rng;
 
     let mut rng = ChaCha20Rng::seed_from_u64(ZKMTD_POSEIDON2_SEED);
-
     Poseidon2Goldilocks::<16>::new_from_rng_128(&mut rng)
+}
+
+/// Global Poseidon2 instance (deterministic, fixed seed). Cached under `std` so
+/// the round constants are generated once rather than on every hash — L-2:
+/// previously `poseidon_hash` re-seeded ChaCha20 and regenerated all constants
+/// on each call (per Merkle node, per commitment). `no_std` rebuilds per call.
+#[cfg(feature = "std")]
+fn get_poseidon2() -> &'static Perm {
+    use std::sync::LazyLock;
+    static PERM: LazyLock<Perm> = LazyLock::new(build_poseidon2);
+    &PERM
+}
+
+#[cfg(not(feature = "std"))]
+fn get_poseidon2() -> Perm {
+    build_poseidon2()
 }
 
 /// Number of input bytes packed into a single Goldilocks field element.

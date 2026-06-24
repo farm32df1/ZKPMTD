@@ -27,6 +27,9 @@ pub mod integrated;
 #[cfg(feature = "full-p3")]
 pub mod range_air;
 
+#[cfg(all(feature = "full-p3", feature = "alloc"))]
+pub mod range_commit_air;
+
 pub use air::SimpleAir;
 pub use config::StarkConfig;
 #[allow(deprecated)]
@@ -40,3 +43,6 @@ pub use integrated::{IntegratedProof, IntegratedProver, IntegratedVerifier};
 
 #[cfg(feature = "full-p3")]
 pub use range_air::RangeAir;
+
+#[cfg(all(feature = "full-p3", feature = "alloc"))]
+pub use range_commit_air::{build_range_commit_trace, RangeCommitAir};
